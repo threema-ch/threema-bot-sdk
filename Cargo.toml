@@ -26,10 +26,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 async-trait = "0.1"
-axum = "0.8"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "tracing"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-config = "0.14"
-crypto_box = { version = "0.9", features = ["serde"] }
+config = { version = "0.14", default-features = false, features = ["toml"] }
+crypto_box = { version = "0.9", features = ["serde"] } # enables serde for SecretKey in config
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 mime = "0.3"
 moka = { version = "0.12", features = ["future", "sync"] }
@@ -37,7 +37,7 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 threema-gateway = { version = "0.20", features = ["public-key-cache-inmemory"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
 tracing = "0.1"
 
 [dev-dependencies]
