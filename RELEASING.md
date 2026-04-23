@@ -1,0 +1,24 @@
+# Releasing
+
+Set variables:
+
+    $ export VERSION=X.Y.Z
+
+Update version numbers:
+
+    $ vim -p Cargo.toml
+    $ cargo update
+
+Update changelog:
+
+    $ vim CHANGELOG.md
+
+Commit & tag:
+
+    $ git commit -m "Release v${VERSION}"
+    $ git tag -a v${VERSION} -m "Version ${VERSION}"
+
+Publish:
+
+    $ cargo publish
+    $ git push && git push --tags

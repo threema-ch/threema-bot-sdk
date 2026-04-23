@@ -11,6 +11,7 @@ keywords = ["threema", "bot", "server", "gateway", "messaging"]
 categories = ["web-programming", "web-programming::http-server"]
 include = [
     "**/*.rs",
+    "**/*.snap",
     "Cargo.toml",
     "README.md",
     "CHANGELOG.md",

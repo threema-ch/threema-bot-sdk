@@ -21,7 +21,7 @@ use threema_gateway_bot::{
     config::BotConfig,
     server::{
         BotServer,
-        handler::{HandlerResult, MessageContext, MessageHandler, Response, TypingHandle},
+        handler::{Action, HandlerResult, MessageContext, MessageHandler, Response, TypingHandle},
     },
 };
 
@@ -31,9 +31,9 @@ struct MyHandler;
 // Implement `MessageHandler` trait for your struct
 #[async_trait::async_trait]
 impl MessageHandler for MyHandler {
-    async fn handle_text(&self, ctx: &MessageContext, text: &str, typing: &TypingHandle) -> lerResult<Vec<Response>> {
+    async fn handle_text(&self, _ctx: &MessageContext, text: &str, typing: &TypingHandle) -> HandlerResult<Action> {
         let text_response = Response::text(format!("You said: {}", text));
-        Ok(vec![text_response])
+        Ok(Action::Respond(vec![text_response]))
     }
 }
 
