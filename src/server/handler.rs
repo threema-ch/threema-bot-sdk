@@ -100,12 +100,12 @@ impl TypingHandle {
                 let msg = TypingIndicatorMessage::new(TypingStatus::Typing).into();
                 match api.encode_and_encrypt(&msg, &recipient_key) {
                     Ok(encrypted) => {
-                        if let Err(e) = api.send(&to, &encrypted, false).await {
-                            tracing::warn!("Failed to send typing indicator to {to}: {e}");
+                        if let Err(err) = api.send(&to, &encrypted, false).await {
+                            tracing::warn!("Failed to send typing indicator to {to}: {err}");
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to encrypt typing indicator for {to}: {e}");
+                    Err(err) => {
+                        tracing::warn!("Failed to encrypt typing indicator for {to}: {err}");
                     }
                 }
             }
@@ -129,13 +129,16 @@ impl TypingHandle {
                 E2eMessage::TypingIndicator(TypingIndicatorMessage::new(TypingStatus::NotTyping));
             match self.api.encode_and_encrypt(&msg, &self.recipient_key) {
                 Ok(encrypted) => {
-                    if let Err(e) = self.api.send(&self.to, &encrypted, false).await {
-                        tracing::warn!("Failed to send stop-typing indicator to {}: {e}", self.to);
+                    if let Err(err) = self.api.send(&self.to, &encrypted, false).await {
+                        tracing::warn!(
+                            "Failed to send stop-typing indicator to {}: {err}",
+                            self.to
+                        );
                     }
                 }
-                Err(e) => {
+                Err(err) => {
                     tracing::warn!(
-                        "Failed to encrypt stop-typing indicator for {}: {e}",
+                        "Failed to encrypt stop-typing indicator for {}: {err}",
                         self.to
                     );
                 }
@@ -198,6 +201,7 @@ pub trait MessageHandler: Send + Sync + 'static {
     /// Define the commands this bot supports.
     ///
     /// The default returns an empty command set (only the built-in `/help` command).
+    #[must_use]
     fn commands() -> Commands {
         Commands::new()
     }
@@ -252,7 +256,7 @@ pub trait MessageHandler: Send + Sync + 'static {
     ///     }
     /// }
     /// ```
-    #[allow(unused)]
+    #[expect(unused_variables, reason = "Default trait method impl")]
     async fn handle_command(
         &self,
         ctx: &MessageContext,
@@ -265,7 +269,7 @@ pub trait MessageHandler: Send + Sync + 'static {
     }
 
     /// Handle a classic reaction (thumbs up or thumbs down, sent in a delivery receipt message).
-    #[allow(unused)]
+    #[expect(unused_variables, reason = "Default trait method impl")]
     async fn handle_classic_reaction(
         &self,
         ctx: &MessageContext,
@@ -280,9 +284,9 @@ pub trait MessageHandler: Send + Sync + 'static {
     /// for tracking reactions to that message (e.g., for confirmation flows).
     ///
     /// # Arguments
-    /// * `ctx` - The original message context (contains user's message_id)
+    /// * `ctx` - The original message context (contains user's message ID)
     /// * `sent_message_id` - The ID of the message that was just sent by the bot
-    #[allow(unused)]
+    #[expect(unused_variables, reason = "Default trait method impl")]
     async fn on_response_sent(
         &self,
         ctx: &MessageContext,
@@ -319,7 +323,7 @@ pub enum ClassicReaction {
 impl TryFrom<DeliveryReceipt> for ClassicReaction {
     type Error = String;
 
-    fn try_from(value: DeliveryReceipt) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: DeliveryReceipt) -> Result<Self, Self::Error> {
         match value {
             DeliveryReceipt::Acknowledged => Ok(Self::ThumbsUp),
             DeliveryReceipt::Declined => Ok(Self::ThumbsDown),
@@ -354,14 +358,14 @@ pub struct FileResponse {
 
 impl Response {
     /// Create a simple text response.
-    pub fn text(text: impl Into<String>) -> Self {
+    pub fn text<T: Into<String>>(text: T) -> Self {
         Self::Text(text.into())
     }
 
     /// Create an image response displayed inline in the chat.
     ///
     /// Note: Media type should be either "image/jpeg" or "image/png".
-    pub fn image(data: Vec<u8>, media_type: impl Into<String>, caption: Option<String>) -> Self {
+    pub fn image<M: Into<String>>(data: Vec<u8>, media_type: M, caption: Option<String>) -> Self {
         Self::Image(FileResponse {
             data,
             media_type: media_type.into(),
@@ -371,9 +375,9 @@ impl Response {
     }
 
     /// Create a file response shown as a downloadable attachment.
-    pub fn file(
+    pub fn file<M: Into<String>>(
         data: Vec<u8>,
-        media_type: impl Into<String>,
+        media_type: M,
         file_name: Option<String>,
         caption: Option<String>,
     ) -> Self {

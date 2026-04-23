@@ -9,7 +9,8 @@ fn unix_timestamp_now() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .expect("system clock is before Unix epoch")
-        .as_secs() as i64
+        .as_secs()
+        .cast_signed()
 }
 
 /// Validate webhook timestamp to prevent replay attacks.
@@ -21,7 +22,9 @@ pub(crate) fn validate_timestamp(
     max_offset_seconds: i64,
 ) -> Result<usize, WebhookError> {
     let current_timestamp = unix_timestamp_now();
-    let age_seconds = current_timestamp - timestamp as i64;
+    #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
+    let timestamp_i64 = timestamp as i64;
+    let age_seconds = current_timestamp.saturating_sub(timestamp_i64);
 
     if age_seconds > max_offset_seconds {
         return Err(WebhookError::TooOld {
@@ -29,7 +32,7 @@ pub(crate) fn validate_timestamp(
             max_seconds: max_offset_seconds,
         });
     }
-    if age_seconds < -max_offset_seconds {
+    if age_seconds < max_offset_seconds.saturating_neg() {
         return Err(WebhookError::FromFuture {
             offset_seconds: age_seconds.abs(),
             max_seconds: max_offset_seconds,
@@ -48,10 +51,17 @@ mod tests {
     mod validate_timestamp {
         use super::*;
 
+        fn now_as_usize() -> usize {
+            usize::try_from(unix_timestamp_now()).expect("current timestamp fits in usize")
+        }
+
+        fn max_age_as_usize() -> usize {
+            usize::try_from(MAX_AGE).expect("MAX_AGE fits in usize")
+        }
+
         #[test]
         fn current_timestamp_is_valid() {
-            let now = unix_timestamp_now() as usize;
-            assert!(validate_timestamp(now, MAX_AGE).is_ok());
+            assert!(validate_timestamp(now_as_usize(), MAX_AGE).is_ok());
         }
 
         #[test]
@@ -66,30 +76,26 @@ mod tests {
 
         #[test]
         fn exactly_at_boundary_is_valid() {
-            let now = unix_timestamp_now();
-            let at_boundary = now - MAX_AGE;
-            assert!(validate_timestamp(at_boundary as usize, MAX_AGE).is_ok());
+            let at_boundary = now_as_usize().saturating_sub(max_age_as_usize());
+            assert!(validate_timestamp(at_boundary, MAX_AGE).is_ok());
         }
 
         #[test]
         fn one_second_beyond_boundary_is_rejected() {
-            let now = unix_timestamp_now();
-            let beyond_boundary = now - MAX_AGE - 1;
-            assert!(validate_timestamp(beyond_boundary as usize, MAX_AGE).is_err());
+            let beyond_boundary = now_as_usize().saturating_sub(max_age_as_usize() + 1);
+            assert!(validate_timestamp(beyond_boundary, MAX_AGE).is_err());
         }
 
         #[test]
         fn near_future_is_valid() {
-            let now = unix_timestamp_now();
-            let near_future = now + 10;
-            assert!(validate_timestamp(near_future as usize, MAX_AGE).is_ok());
+            let near_future = now_as_usize().saturating_add(10);
+            assert!(validate_timestamp(near_future, MAX_AGE).is_ok());
         }
 
         #[test]
         fn far_future_is_rejected() {
-            let now = unix_timestamp_now();
-            let far_future = now + MAX_AGE + 1;
-            assert!(validate_timestamp(far_future as usize, MAX_AGE).is_err());
+            let far_future = now_as_usize().saturating_add(max_age_as_usize() + 1);
+            assert!(validate_timestamp(far_future, MAX_AGE).is_err());
         }
     }
 }

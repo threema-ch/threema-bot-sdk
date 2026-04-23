@@ -192,7 +192,7 @@ pub struct ServerConfig {
     pub webhook_path: String,
     /// Maximum number of message IDs kept in the deduplication cache
     ///
-    /// Defaults to 100_000
+    /// Defaults to `100_000`
     #[serde(default = "default_message_id_cache_size")]
     pub message_id_cache_size: u64,
     /// Maximum age of webhook timestamps in seconds
@@ -233,7 +233,7 @@ pub struct ThreemaConfig {
 }
 
 fn default_api_url() -> String {
-    "https://msgapi.threema.ch".to_string()
+    "https://msgapi.threema.ch".to_owned()
 }
 
 /// Rate limiting configuration.
@@ -371,17 +371,17 @@ mod tests {
     fn create_test_config() -> BotConfig {
         BotConfig {
             server: ServerConfig {
-                host: "0.0.0.0".to_string(),
+                host: "0.0.0.0".to_owned(),
                 port: 8080,
-                webhook_path: "/webhook".to_string(),
+                webhook_path: "/webhook".to_owned(),
                 message_id_cache_size: 100_000,
                 max_webhook_age_seconds: 300,
             },
             threema: ThreemaConfig {
                 gateway_id: ThreemaId::try_from("*TESTBOT").unwrap(),
-                private_key: SecretKey::from_bytes([0x42u8; 32]),
-                api_secret: "secret".to_string(),
-                api_url: "https://msgapi.threema.ch".to_string(),
+                private_key: SecretKey::from_bytes([0x42_u8; 32]),
+                api_secret: "secret".to_owned(),
+                api_url: "https://msgapi.threema.ch".to_owned(),
                 allowed_users: vec![ThreemaId::try_from("ABCD1234").unwrap()],
             },
             rate_limiting: RateLimitingConfig::default(),
@@ -389,13 +389,13 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_config() {
+    fn valid_config() {
         let config = create_test_config();
         assert!(config.validate().is_ok());
     }
 
     #[test]
-    fn test_invalid_gateway_id() {
+    fn invalid_gateway_id() {
         let mut config = create_test_config();
         config.threema.gateway_id = ThreemaId::try_from("NOTASTAR").unwrap();
         assert!(config.validate().is_err());

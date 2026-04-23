@@ -26,7 +26,7 @@ impl MessageDeduplicator {
     ///
     /// * `capacity` - Maximum number of entries to track
     /// * `ttl_seconds` - Time-to-live for entries in seconds
-    pub fn new(capacity: u64, ttl_seconds: u64) -> Self {
+    pub(crate) fn new(capacity: u64, ttl_seconds: u64) -> Self {
         let cache = moka::sync::Cache::builder()
             .time_to_live(std::time::Duration::from_secs(ttl_seconds))
             .max_capacity(capacity)
@@ -42,10 +42,14 @@ impl MessageDeduplicator {
     ///
     /// This method is atomic – concurrent calls on the same key are coalesced,
     /// so exactly one caller receives [`DeduplicateResult::New`].
-    pub fn check_and_insert(&self, sender: &ThreemaId, message_id: MessageId) -> DeduplicateResult {
+    pub(crate) fn check_and_insert(
+        &self,
+        sender: ThreemaId,
+        message_id: MessageId,
+    ) -> DeduplicateResult {
         if self
             .cache
-            .entry((*sender, message_id))
+            .entry((sender, message_id))
             .or_insert_with(|| ())
             .is_fresh()
         {
@@ -73,7 +77,7 @@ mod tests {
         fn first_insert_is_new() {
             let dedup = MessageDeduplicator::new(1000, 300);
             assert_eq!(
-                dedup.check_and_insert(&sender("SENDER01"), MessageId::from_u64(1)),
+                dedup.check_and_insert(sender("SENDER01"), MessageId::from_u64(1)),
                 DeduplicateResult::New
             );
         }
@@ -82,9 +86,9 @@ mod tests {
         fn second_insert_is_duplicate() {
             let dedup = MessageDeduplicator::new(1000, 300);
             let id = MessageId::from_u64(1);
-            dedup.check_and_insert(&sender("SENDER01"), id);
+            dedup.check_and_insert(sender("SENDER01"), id);
             assert_eq!(
-                dedup.check_and_insert(&sender("SENDER01"), id),
+                dedup.check_and_insert(sender("SENDER01"), id),
                 DeduplicateResult::Duplicate
             );
         }
@@ -93,11 +97,11 @@ mod tests {
         fn different_ids_are_independent() {
             let dedup = MessageDeduplicator::new(1000, 300);
             assert_eq!(
-                dedup.check_and_insert(&sender("SENDER01"), MessageId::from_u64(1)),
+                dedup.check_and_insert(sender("SENDER01"), MessageId::from_u64(1)),
                 DeduplicateResult::New
             );
             assert_eq!(
-                dedup.check_and_insert(&sender("SENDER01"), MessageId::from_u64(2)),
+                dedup.check_and_insert(sender("SENDER01"), MessageId::from_u64(2)),
                 DeduplicateResult::New
             );
         }
@@ -107,11 +111,11 @@ mod tests {
             let dedup = MessageDeduplicator::new(1000, 300);
             let id = MessageId::from_u64(1);
             assert_eq!(
-                dedup.check_and_insert(&sender("SENDER01"), id),
+                dedup.check_and_insert(sender("SENDER01"), id),
                 DeduplicateResult::New
             );
             assert_eq!(
-                dedup.check_and_insert(&sender("SENDER02"), id),
+                dedup.check_and_insert(sender("SENDER02"), id),
                 DeduplicateResult::New
             );
         }
@@ -123,15 +127,15 @@ mod tests {
             let mut handles = vec![];
 
             // Spawn multiple threads that try to insert the same (sender, message ID) pairs
-            for thread_id in 0..10 {
+            for thread_id in 0_u32..10 {
                 let dedup_clone = Arc::clone(&dedup);
                 let handle = thread::spawn(move || {
-                    let mut new_count = 0;
-                    for i in 0..100 {
-                        if dedup_clone.check_and_insert(&sender, MessageId::from_u64(i))
+                    let mut new_count: u32 = 0;
+                    for msg_num in 0_u64..100 {
+                        if dedup_clone.check_and_insert(sender, MessageId::from_u64(msg_num))
                             == DeduplicateResult::New
                         {
-                            new_count += 1;
+                            new_count = new_count.saturating_add(1);
                         }
                     }
                     (thread_id, new_count)
@@ -140,15 +144,15 @@ mod tests {
             }
 
             // Collect results
-            let mut total_new = 0;
+            let mut total_new: u32 = 0;
             for handle in handles {
                 let (_thread_id, new_count) = handle.join().unwrap();
-                total_new += new_count;
+                total_new = total_new.saturating_add(new_count);
             }
 
             // Each unique (sender, message ID) pair should only be counted as
             // "new" once across all threads, so total should be exactly 100
-            assert_eq!(total_new, 100);
+            assert_eq!(total_new, 100_u32);
         }
     }
 }

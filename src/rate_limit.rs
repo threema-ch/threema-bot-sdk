@@ -9,16 +9,16 @@ use threema_gateway::protocol::ThreemaId;
 
 /// Rate limiting configuration.
 #[derive(Debug, Clone)]
-pub struct RateLimitConfig {
+pub(crate) struct RateLimitConfig {
     /// Maximum messages per minute per user.
-    pub messages_per_minute: u32,
+    pub(crate) messages_per_minute: u32,
     /// Maximum messages per hour per user.
-    pub messages_per_hour: u32,
+    pub(crate) messages_per_hour: u32,
 }
 
 /// Result of a rate limit check.
 #[derive(Debug, Clone)]
-pub enum RateLimitResult {
+pub(crate) enum RateLimitResult {
     /// Request is allowed.
     Allowed,
     /// Request is rate limited.
@@ -59,7 +59,7 @@ impl Window {
             self.started_at = Instant::now();
             return true;
         }
-        self.count += 1;
+        self.count = self.count.saturating_add(1);
         self.count <= limit
     }
 
@@ -82,27 +82,27 @@ impl Window {
 /// chat this is not a practical concern.
 ///
 /// Inactive users are automatically cleaned up via TTL caches to prevent unbounded memory growth.
-pub struct RateLimiterManager {
+pub(crate) struct RateLimiterManager {
     config: RateLimitConfig,
     minute_windows: SyncCache<ThreemaId, Window>,
     hour_windows: SyncCache<ThreemaId, Window>,
 }
 
 impl RateLimiterManager {
-    /// Create a new rate limiter manager with the default user cache capacity of 10_000
-    pub fn new(config: RateLimitConfig) -> Self {
+    /// Create a new rate limiter manager with the default user cache capacity of `10_000`
+    pub(crate) fn new(config: RateLimitConfig) -> Self {
         Self::with_capacity(config, 10_000)
     }
 
     /// Create a new rate limiter manager with the specified user cache capacity
-    pub fn with_capacity(config: RateLimitConfig, capacity: u64) -> Self {
+    pub(crate) fn with_capacity(config: RateLimitConfig, capacity: u64) -> Self {
         let minute_windows = SyncCache::builder()
             .time_to_idle(Duration::from_secs(60 + 10)) // Expire after 1 minute + 10 seconds
             .max_capacity(capacity)
             .build();
 
         let hour_windows = SyncCache::builder()
-            .time_to_idle(Duration::from_secs(3600 + 60)) // Expire after 1 hour + 60 seconds
+            .time_to_idle(Duration::from_mins(61)) // Expire after 1 hour + 60 seconds grace
             .max_capacity(capacity)
             .build();
 
@@ -117,14 +117,14 @@ impl RateLimiterManager {
     ///
     /// Returns [`RateLimitResult::Allowed`] if the request should proceed,
     /// or [`RateLimitResult::Limited`] with a message if rate limited.
-    pub fn check(&self, user_id: &ThreemaId) -> RateLimitResult {
-        let key = *user_id;
+    pub(crate) fn check(&self, user_id: ThreemaId) -> RateLimitResult {
+        let key = user_id;
 
         // Check and update per-minute window
         let mut minute_window = self
             .minute_windows
             .get(&key)
-            .unwrap_or_else(|| Window::new(Duration::from_secs(60)));
+            .unwrap_or_else(|| Window::new(Duration::from_mins(1)));
 
         if !minute_window.check_and_increment(self.config.messages_per_minute) {
             let wait_time = minute_window.time_remaining();
@@ -140,7 +140,7 @@ impl RateLimiterManager {
         let mut hour_window = self
             .hour_windows
             .get(&key)
-            .unwrap_or_else(|| Window::new(Duration::from_secs(3600)));
+            .unwrap_or_else(|| Window::new(Duration::from_hours(1)));
 
         if !hour_window.check_and_increment(self.config.messages_per_hour) {
             let wait_time = hour_window.time_remaining();
@@ -159,6 +159,11 @@ impl RateLimiterManager {
 /// Format a duration in human-readable format.
 ///
 /// Examples: "5 seconds", "2 minutes", "1 minute and 30 seconds"
+#[expect(
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    reason = "intentional integer arithmetic for human-readable time formatting"
+)]
 fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
 
@@ -204,8 +209,8 @@ mod tests {
 
         #[test]
         fn minutes() {
-            assert_eq!(format_duration(Duration::from_secs(60)), "1 minute");
-            assert_eq!(format_duration(Duration::from_secs(120)), "2 minutes");
+            assert_eq!(format_duration(Duration::from_mins(1)), "1 minute");
+            assert_eq!(format_duration(Duration::from_mins(2)), "2 minutes");
             assert_eq!(
                 format_duration(Duration::from_secs(90)),
                 "1 minute and 30 seconds"
@@ -214,16 +219,16 @@ mod tests {
 
         #[test]
         fn hours() {
-            assert_eq!(format_duration(Duration::from_secs(3600)), "1 hour");
-            assert_eq!(format_duration(Duration::from_secs(7200)), "2 hours");
+            assert_eq!(format_duration(Duration::from_hours(1)), "1 hour");
+            assert_eq!(format_duration(Duration::from_hours(2)), "2 hours");
         }
     }
 
     mod rate_limiter_manager {
         use super::*;
 
-        fn id(s: &str) -> ThreemaId {
-            ThreemaId::try_from(s).unwrap()
+        fn id(raw: &str) -> ThreemaId {
+            ThreemaId::try_from(raw).unwrap()
         }
 
         fn manager(per_minute: u32, per_hour: u32) -> RateLimiterManager {
@@ -235,41 +240,41 @@ mod tests {
 
         #[test]
         fn allows_requests_within_limit() {
-            let m = manager(5, 100);
+            let mgr = manager(5, 100);
             let user = id("USER0001");
-            for _ in 0..5 {
-                assert!(matches!(m.check(&user), RateLimitResult::Allowed));
+            for _ in 0_u32..5 {
+                assert!(matches!(mgr.check(user), RateLimitResult::Allowed));
             }
         }
 
         #[test]
         fn blocks_excess_per_minute() {
-            let m = manager(2, 100);
+            let mgr = manager(2, 100);
             let user = id("USER0001");
-            assert!(matches!(m.check(&user), RateLimitResult::Allowed));
-            assert!(matches!(m.check(&user), RateLimitResult::Allowed));
-            assert!(matches!(m.check(&user), RateLimitResult::Limited { .. }));
+            assert!(matches!(mgr.check(user), RateLimitResult::Allowed));
+            assert!(matches!(mgr.check(user), RateLimitResult::Allowed));
+            assert!(matches!(mgr.check(user), RateLimitResult::Limited { .. }));
         }
 
         #[test]
         fn blocks_excess_per_hour() {
-            let m = manager(100, 2);
+            let mgr = manager(100, 2);
             let user = id("USER0001");
-            assert!(matches!(m.check(&user), RateLimitResult::Allowed));
-            assert!(matches!(m.check(&user), RateLimitResult::Allowed));
-            assert!(matches!(m.check(&user), RateLimitResult::Limited { .. }));
+            assert!(matches!(mgr.check(user), RateLimitResult::Allowed));
+            assert!(matches!(mgr.check(user), RateLimitResult::Allowed));
+            assert!(matches!(mgr.check(user), RateLimitResult::Limited { .. }));
         }
 
         #[test]
         fn per_user_isolation() {
-            let m = manager(1, 100);
+            let mgr = manager(1, 100);
             let user1 = id("USER0001");
             let user2 = id("USER0002");
             let user3 = id("USER0003");
-            assert!(matches!(m.check(&user1), RateLimitResult::Allowed));
-            assert!(matches!(m.check(&user2), RateLimitResult::Allowed));
-            assert!(matches!(m.check(&user3), RateLimitResult::Allowed));
-            assert!(matches!(m.check(&user1), RateLimitResult::Limited { .. }));
+            assert!(matches!(mgr.check(user1), RateLimitResult::Allowed));
+            assert!(matches!(mgr.check(user2), RateLimitResult::Allowed));
+            assert!(matches!(mgr.check(user3), RateLimitResult::Allowed));
+            assert!(matches!(mgr.check(user1), RateLimitResult::Limited { .. }));
         }
     }
 }

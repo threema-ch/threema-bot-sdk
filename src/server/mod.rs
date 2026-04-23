@@ -122,13 +122,13 @@ impl<H: MessageHandler> AppState<H> {
         sender_id: &ThreemaId,
         sender_public_key: &RecipientKey,
     ) -> bool {
-        if let Some(ref limiter) = self.rate_limiter
-            && let RateLimitResult::Limited { message, .. } = limiter.check(sender_id)
+        if let Some(limiter) = &self.rate_limiter
+            && let RateLimitResult::Limited { message, .. } = limiter.check(*sender_id)
         {
             tracing::warn!("Rate limit exceeded for {}", sender_id);
 
             // Deduplicate notifications
-            let notification_key = format!("rate_limit:{}", sender_id);
+            let notification_key = format!("rate_limit:{sender_id}");
             if self
                 .rate_limit_notification_cache
                 .get(&notification_key)
@@ -223,9 +223,9 @@ impl<H: MessageHandler> BotServer<H> {
         // Create application state
         let app_state = Arc::new(AppState {
             config: config.clone(),
-            threema_client: self.threema_client.clone(),
-            handler: self.handler.clone(),
-            commands: self.commands.clone(),
+            threema_client: Arc::clone(&self.threema_client),
+            handler: Arc::clone(&self.handler),
+            commands: Arc::clone(&self.commands),
             message_dedup,
             rate_limiter,
             rate_limit_notification_cache,
@@ -273,13 +273,12 @@ async fn fallback_handler(request: Request) -> impl IntoResponse {
 async fn health_handler() -> impl IntoResponse {
     let health = json!({
         "status": "healthy",
-        "service": "threema-bot"
     });
 
     (
         axum::http::StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/json")],
-        serde_json::to_string(&health).unwrap(),
+        serde_json::to_string(&health).expect("health JSON serialization"),
     )
 }
 
@@ -305,15 +304,15 @@ async fn webhook_handler<H: MessageHandler>(
             // if parsing fails then retrying will not help.
             return (axum::http::StatusCode::OK, "Parse error");
         }
-        Err(e) => {
-            tracing::warn!("Webhook error: {}", e);
+        Err(err) => {
+            tracing::warn!("Webhook error: {}", err);
             return (axum::http::StatusCode::OK, "Error");
         }
     };
 
     // Verify timestamp
-    if let Err(e) = validate_timestamp(msg.date, state.config.server.max_webhook_age_seconds) {
-        tracing::warn!("Webhook verification failed from {}: {}", msg.from, e);
+    if let Err(err) = validate_timestamp(msg.date, state.config.server.max_webhook_age_seconds) {
+        tracing::warn!("Webhook verification failed from {}: {}", msg.from, err);
         // Return 200 OK to prevent Threema Gateway delivery reattempts,
         // if message is too old then retrying will not help.
         return (axum::http::StatusCode::OK, "Invalid timestamp");
@@ -322,7 +321,7 @@ async fn webhook_handler<H: MessageHandler>(
     // Check for duplicate message
     if state
         .message_dedup
-        .check_and_insert(&msg.from, msg.message_id)
+        .check_and_insert(msg.from, msg.message_id)
         == DeduplicateResult::Duplicate
     {
         tracing::debug!("Duplicate message {} from {}", msg.message_id, msg.from);
@@ -332,8 +331,8 @@ async fn webhook_handler<H: MessageHandler>(
     // Fetch sender's public key
     let sender_public_key = match state.threema_client.lookup_pubkey(&msg.from).await {
         Ok(key) => key,
-        Err(e) => {
-            tracing::error!("Failed to fetch public key for {}: {}", msg.from, e);
+        Err(err) => {
+            tracing::error!("Failed to fetch public key for {}: {}", msg.from, err);
             return (axum::http::StatusCode::OK, "Failed to fetch public key");
         }
     };
@@ -344,9 +343,9 @@ async fn webhook_handler<H: MessageHandler>(
         .api()
         .decrypt_and_decode_incoming_message(&msg, &sender_public_key)
     {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("Incoming message error: {e}",);
+        Ok(plain) => plain,
+        Err(err) => {
+            tracing::error!("Incoming message error: {err}",);
             return (axum::http::StatusCode::OK, "Decryption failed");
         }
     };
@@ -375,13 +374,14 @@ async fn webhook_handler<H: MessageHandler>(
                 // calling `handle_classic_reaction` for every message ID.
 
                 // Create `MessageContext` for every message ID
+                #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
                 let created_at = DateTime::from_timestamp(msg.date as i64, 0)
                     .expect("message timestamp already validated");
                 let contexts = delivery_receipt
                     .message_ids
                     .as_slice()
                     .iter()
-                    .cloned()
+                    .copied()
                     .map(|message_id| MessageContext {
                         message_id,
                         sender_identity: msg.from,
@@ -390,23 +390,23 @@ async fn webhook_handler<H: MessageHandler>(
                     })
                     .collect::<Vec<_>>();
 
-                let handler = state.handler.clone();
+                let handler = Arc::clone(&state.handler);
                 let sender_key = sender_public_key.clone();
                 tokio::spawn(async move {
                     for context in contexts {
                         match handler.handle_classic_reaction(&context, reaction).await {
                             Ok(action) => {
-                                if let Err(e) =
+                                if let Err(err) =
                                     handle_action(&state, &context, &msg.from, &sender_key, action)
                                         .await
                                 {
                                     tracing::error!(
                                         "Failed to send classic reaction response: {}",
-                                        e
+                                        err
                                     );
                                 }
                             }
-                            Err(e) => tracing::error!("Error handling classic reaction: {}", e),
+                            Err(err) => tracing::error!("Error handling classic reaction: {}", err),
                         }
                     }
                 });
@@ -505,17 +505,18 @@ async fn webhook_handler<H: MessageHandler>(
     }
 
     // Process message in background
-    let state_clone = state.clone();
+    let state_clone = Arc::clone(&state);
     let ctx = MessageContext {
         message_id: msg.message_id,
         sender_identity: msg.from,
         sender_nickname: msg.nickname,
+        #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
         created_at: DateTime::from_timestamp(msg.date as i64, 0)
             .expect("message timestamp already validated"),
     };
     tokio::spawn(async move {
-        if let Err(e) = process_message(state_clone, ctx, sender_public_key, text).await {
-            tracing::error!("Error processing message from {}: {}", msg.from, e);
+        if let Err(err) = process_message(state_clone, ctx, sender_public_key, text).await {
+            tracing::error!("Error processing message from {}: {}", msg.from, err);
         }
     });
 
@@ -636,8 +637,8 @@ async fn process_message<H: MessageHandler>(
             )
             .await?;
         }
-        Err(e) => {
-            tracing::error!("Handler error for {}: {}", ctx.sender_identity, e);
+        Err(err) => {
+            tracing::error!("Handler error for {}: {}", ctx.sender_identity, err);
             send_text(
                 state.threema_client.api(),
                 &ctx.sender_identity,

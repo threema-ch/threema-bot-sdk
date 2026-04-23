@@ -13,7 +13,7 @@
 //! The style can be set globally using the [`Commands::style()`] method. By default, slash style is
 //! used.
 
-use std::fmt::Write;
+use std::fmt::Write as _;
 
 /// The style of command syntax used by the bot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,15 +26,15 @@ pub enum CommandStyle {
 
 /// Parsed command from user input.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ParsedCommand<'a> {
+pub(crate) enum ParsedCommand<'cmd> {
     /// Show help text.
     Help,
     /// A registered custom command.
-    Registered { name: &'a str, args: &'a str },
+    Registered { name: &'cmd str, args: &'cmd str },
     /// Unknown command (not registered).
-    Unknown { name: &'a str, args: &'a str },
+    Unknown { name: &'cmd str, args: &'cmd str },
     /// Not a command - regular message.
-    None(&'a str),
+    None(&'cmd str),
 }
 
 /// A custom command definition with its name and description.
@@ -60,7 +60,7 @@ struct CustomCommand {
 /// ```
 pub struct Commands {
     pub(crate) style: CommandStyle,
-    custom_commands: Vec<CustomCommand>,
+    registered: Vec<CustomCommand>,
     pub(crate) handle_unknown: bool,
 }
 
@@ -69,15 +69,17 @@ impl Commands {
     ///
     /// Base commands (like `/help`) are always included.
     /// The default command style is [`CommandStyle::Slash`].
+    #[must_use]
     pub fn new() -> Self {
         Self {
             style: CommandStyle::Slash,
-            custom_commands: Vec::new(),
+            registered: Vec::new(),
             handle_unknown: false,
         }
     }
 
     /// Set the command style.
+    #[must_use]
     pub fn style(mut self, style: CommandStyle) -> Self {
         self.style = style;
         self
@@ -88,8 +90,9 @@ impl Commands {
     /// Registered commands are dispatched to
     /// [`MessageHandler::handle_command`](crate::server::handler::MessageHandler::handle_command)
     /// and included in the auto-generated help text.
-    pub fn register(mut self, name: impl Into<String>, description: impl Into<String>) -> Self {
-        self.custom_commands.push(CustomCommand {
+    #[must_use]
+    pub fn register<N: Into<String>, D: Into<String>>(mut self, name: N, description: D) -> Self {
+        self.registered.push(CustomCommand {
             name: name.into(),
             description: description.into(),
         });
@@ -104,6 +107,7 @@ impl Commands {
     ///
     /// Note: This will only work for [`CommandStyle::Slash`], since word style command parsing
     /// cannot differentiate between unknown commands and plain text.
+    #[must_use]
     pub fn handle_unknown(mut self, enabled: bool) -> Self {
         self.handle_unknown = enabled;
         self
@@ -140,14 +144,14 @@ impl CommandRegistry {
     pub(crate) fn format_command(&self, name: &str) -> String {
         match self.commands.style {
             CommandStyle::Slash => format!("/{name}"),
-            CommandStyle::Word => name.to_string(),
+            CommandStyle::Word => name.to_owned(),
         }
     }
 
     /// Parse a text message into a command.
     ///
     /// Commands are case-sensitive.
-    pub(crate) fn parse<'a>(&self, text: &'a str) -> ParsedCommand<'a> {
+    pub(crate) fn parse<'cmd>(&self, text: &'cmd str) -> ParsedCommand<'cmd> {
         let trimmed = text.trim();
 
         match self.commands.style {
@@ -159,11 +163,11 @@ impl CommandRegistry {
                     // Bare `/` with no command name
                     return ParsedCommand::None(trimmed);
                 };
-                let args = rest.strip_prefix(name).map(|s| s.trim()).unwrap_or("");
+                let args = rest.strip_prefix(name).map_or("", str::trim);
 
                 if name == "help" {
                     ParsedCommand::Help
-                } else if self.commands.custom_commands.iter().any(|c| c.name == name) {
+                } else if self.commands.registered.iter().any(|cmd| cmd.name == name) {
                     ParsedCommand::Registered { name, args }
                 } else {
                     ParsedCommand::Unknown { name, args }
@@ -173,11 +177,11 @@ impl CommandRegistry {
                 let Some(name) = trimmed.split_whitespace().next() else {
                     return ParsedCommand::None(trimmed);
                 };
-                let args = trimmed.strip_prefix(name).map(|s| s.trim()).unwrap_or("");
+                let args = trimmed.strip_prefix(name).map_or("", str::trim);
 
                 if name == "help" {
                     ParsedCommand::Help
-                } else if self.commands.custom_commands.iter().any(|c| c.name == name) {
+                } else if self.commands.registered.iter().any(|cmd| cmd.name == name) {
                     ParsedCommand::Registered { name, args }
                 } else {
                     // Note: In case of "Word" style (with no command prefix) we cannot
@@ -206,14 +210,14 @@ impl CommandRegistry {
             CommandStyle::Word => "",
         };
 
-        if let Some(ref description) = self.description {
-            writeln!(text, "{description}\n").unwrap();
+        if let Some(description) = &self.description {
+            writeln!(text, "{description}\n").expect("write to String");
         }
 
-        writeln!(text, "Available Commands:\n").unwrap();
-        writeln!(text, "{prefix}help - Show this help message").unwrap();
-        for cmd in &self.commands.custom_commands {
-            writeln!(text, "{prefix}{} - {}", cmd.name, cmd.description).unwrap();
+        writeln!(text, "Available Commands:\n").expect("write to String");
+        writeln!(text, "{prefix}help - Show this help message").expect("write to String");
+        for cmd in &self.commands.registered {
+            writeln!(text, "{prefix}{} - {}", cmd.name, cmd.description).expect("write to String");
         }
         text.truncate(text.trim_end().len());
         text
@@ -223,10 +227,10 @@ impl CommandRegistry {
 /// Default messages for common bot responses.
 pub(crate) mod messages {
     /// Access denied for unauthorized users.
-    pub const ACCESS_DENIED: &str = "Sorry, you are not authorized to use this service. Please contact the administrator if you believe this is an error.";
+    pub(crate) const ACCESS_DENIED: &str = "Sorry, you are not authorized to use this service. Please contact the administrator if you believe this is an error.";
 
     /// Generic error message.
-    pub const GENERIC_ERROR: &str =
+    pub(crate) const GENERIC_ERROR: &str =
         "Sorry, I encountered an error processing your request. Please try again.";
 }
 
@@ -247,23 +251,23 @@ mod tests {
 
         #[test]
         fn help_command() {
-            let r = registry();
-            assert_eq!(r.parse("/help"), ParsedCommand::Help);
-            assert_eq!(r.parse("  /help  "), ParsedCommand::Help);
+            let reg = registry();
+            assert_eq!(reg.parse("/help"), ParsedCommand::Help);
+            assert_eq!(reg.parse("  /help  "), ParsedCommand::Help);
         }
 
         #[test]
         fn registered_command() {
-            let r = registry();
+            let reg = registry();
             assert_eq!(
-                r.parse("/remind 30 Take a break"),
+                reg.parse("/remind 30 Take a break"),
                 ParsedCommand::Registered {
                     name: "remind",
                     args: "30 Take a break",
                 }
             );
             assert_eq!(
-                r.parse("/list"),
+                reg.parse("/list"),
                 ParsedCommand::Registered {
                     name: "list",
                     args: "",
@@ -273,16 +277,16 @@ mod tests {
 
         #[test]
         fn unknown_command() {
-            let r = registry();
+            let reg = registry();
             assert_eq!(
-                r.parse("/foo bar"),
+                reg.parse("/foo bar"),
                 ParsedCommand::Unknown {
                     name: "foo",
                     args: "bar",
                 }
             );
             assert_eq!(
-                r.parse("/unknown"),
+                reg.parse("/unknown"),
                 ParsedCommand::Unknown {
                     name: "unknown",
                     args: "",
@@ -292,16 +296,16 @@ mod tests {
 
         #[test]
         fn regular_message() {
-            let r = registry();
-            assert_eq!(r.parse("Hello"), ParsedCommand::None("Hello"));
-            assert_eq!(r.parse("  Hello  "), ParsedCommand::None("Hello"));
+            let reg = registry();
+            assert_eq!(reg.parse("Hello"), ParsedCommand::None("Hello"));
+            assert_eq!(reg.parse("  Hello  "), ParsedCommand::None("Hello"));
         }
 
         #[test]
         fn bare_slash() {
-            let r = registry();
-            assert_eq!(r.parse("/"), ParsedCommand::None("/"));
-            assert_eq!(r.parse("  /  "), ParsedCommand::None("/"));
+            let reg = registry();
+            assert_eq!(reg.parse("/"), ParsedCommand::None("/"));
+            assert_eq!(reg.parse("  /  "), ParsedCommand::None("/"));
         }
     }
 
@@ -318,23 +322,23 @@ mod tests {
 
         #[test]
         fn help_command() {
-            let r = registry();
-            assert_eq!(r.parse("help"), ParsedCommand::Help);
-            assert_eq!(r.parse("  help  "), ParsedCommand::Help);
+            let reg = registry();
+            assert_eq!(reg.parse("help"), ParsedCommand::Help);
+            assert_eq!(reg.parse("  help  "), ParsedCommand::Help);
         }
 
         #[test]
         fn registered_command() {
-            let r = registry();
+            let reg = registry();
             assert_eq!(
-                r.parse("remind 30 Take a break"),
+                reg.parse("remind 30 Take a break"),
                 ParsedCommand::Registered {
                     name: "remind",
                     args: "30 Take a break",
                 }
             );
             assert_eq!(
-                r.parse("list"),
+                reg.parse("list"),
                 ParsedCommand::Registered {
                     name: "list",
                     args: "",
@@ -344,16 +348,16 @@ mod tests {
 
         #[test]
         fn regular_message() {
-            let r = registry();
-            assert_eq!(r.parse("Hello world"), ParsedCommand::None("Hello world"));
-            assert_eq!(r.parse("  Hello  "), ParsedCommand::None("Hello"));
+            let reg = registry();
+            assert_eq!(reg.parse("Hello world"), ParsedCommand::None("Hello world"));
+            assert_eq!(reg.parse("  Hello  "), ParsedCommand::None("Hello"));
         }
 
         #[test]
         fn empty_message() {
-            let r = registry();
-            assert_eq!(r.parse(""), ParsedCommand::None(""));
-            assert_eq!(r.parse("   "), ParsedCommand::None(""));
+            let reg = registry();
+            assert_eq!(reg.parse(""), ParsedCommand::None(""));
+            assert_eq!(reg.parse("   "), ParsedCommand::None(""));
         }
     }
 
@@ -362,14 +366,14 @@ mod tests {
 
         #[test]
         fn without_description() {
-            let r = CommandRegistry::new(None, Commands::new());
-            insta::assert_snapshot!(r.help_text());
+            let reg = CommandRegistry::new(None, Commands::new());
+            insta::assert_snapshot!(reg.help_text());
         }
 
         #[test]
         fn with_description() {
-            let r = CommandRegistry::new(Some("My cool bot.".into()), Commands::new());
-            insta::assert_snapshot!(r.help_text());
+            let reg = CommandRegistry::new(Some("My cool bot.".into()), Commands::new());
+            insta::assert_snapshot!(reg.help_text());
         }
 
         #[test]
@@ -377,14 +381,14 @@ mod tests {
             let commands = Commands::new()
                 .register("remind", "Set a reminder")
                 .register("list", "List your reminders");
-            let r = CommandRegistry::new(None, commands);
-            insta::assert_snapshot!(r.help_text());
+            let reg = CommandRegistry::new(None, commands);
+            insta::assert_snapshot!(reg.help_text());
         }
 
         #[test]
         fn with_prelude() {
-            let r = CommandRegistry::new(None, Commands::new());
-            insta::assert_snapshot!(r.help_text_with_prelude(Some("Unknown command: /foo")));
+            let reg = CommandRegistry::new(None, Commands::new());
+            insta::assert_snapshot!(reg.help_text_with_prelude(Some("Unknown command: /foo")));
         }
 
         #[test]
@@ -393,8 +397,8 @@ mod tests {
                 .style(CommandStyle::Word)
                 .register("remind", "Set a reminder")
                 .register("list", "List your reminders");
-            let r = CommandRegistry::new(None, commands);
-            insta::assert_snapshot!(r.help_text());
+            let reg = CommandRegistry::new(None, commands);
+            insta::assert_snapshot!(reg.help_text());
         }
     }
 

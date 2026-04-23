@@ -1,4 +1,4 @@
-//! ThreemaClient wrapper for the threema-gateway crate.
+//! Wrapper for the threema-gateway crate.
 //!
 //! Provides construction helpers and file message support with automatic
 //! thumbnail generation.
@@ -10,7 +10,7 @@
 use std::{io::Cursor, time::Duration};
 
 use image::{
-    ImageEncoder, ImageReader,
+    ImageEncoder as _, ImageReader,
     codecs::{jpeg::JpegEncoder, png::PngEncoder},
 };
 use threema_gateway::{
@@ -44,17 +44,17 @@ pub(crate) struct ThreemaClient {
 
 /// Base functions.
 impl ThreemaClient {
-    /// Create a new ThreemaClient.
+    /// Create a new `ThreemaClient`.
     pub(crate) fn new(
-        api_url: String,
+        api_url: &str,
         gateway_id: ThreemaId,
-        api_secret: String,
+        api_secret: &str,
         private_key: SecretKey,
     ) -> Result<Self, ApiBuilderError> {
-        let mut builder = ApiBuilder::new(gateway_id, &api_secret);
+        let mut builder = ApiBuilder::new(gateway_id, api_secret);
 
         // Support custom endpoints
-        let api_url_trimmed = api_url.trim_end_matches('/').to_string();
+        let api_url_trimmed = api_url.trim_end_matches('/').to_owned();
         if !api_url_trimmed.is_empty() && api_url_trimmed != "https://msgapi.threema.ch" {
             tracing::info!("Using custom Threema Gateway endpoint: {}", api_url_trimmed);
             builder = builder.with_custom_endpoint(api_url_trimmed);
@@ -62,8 +62,7 @@ impl ThreemaClient {
 
         let e2e_api = builder.with_private_key(private_key).into_e2e()?;
 
-        let pubkey_cache =
-            InMemoryPublicKeyCache::new(10_000, Duration::from_secs(7 * 24 * 60 * 60));
+        let pubkey_cache = InMemoryPublicKeyCache::new(10_000, Duration::from_hours(7 * 24));
 
         Ok(Self {
             e2e_api,
@@ -71,14 +70,14 @@ impl ThreemaClient {
         })
     }
 
-    /// Create a ThreemaClient from config
+    /// Create a `ThreemaClient` from config
     pub(crate) fn from_config(
         config: &crate::config::ThreemaConfig,
     ) -> Result<Self, ApiBuilderError> {
         Self::new(
-            config.api_url.clone(),
+            &config.api_url,
             config.gateway_id,
-            config.api_secret.clone(),
+            &config.api_secret,
             config.private_key.clone(),
         )
     }
@@ -116,6 +115,10 @@ impl ThreemaClient {
 }
 
 /// Functions related to sending messages.
+#[expect(
+    clippy::multiple_inherent_impl,
+    reason = "Used for grouping in rustdoc"
+)]
 impl ThreemaClient {
     /// Send a file as a download-style attachment.
     ///
@@ -132,7 +135,7 @@ impl ThreemaClient {
         let recipient_key = self
             .lookup_pubkey(to)
             .await
-            .map_err(|e| pubkey_lookup_err(to, e))?;
+            .map_err(|err| pubkey_lookup_err(*to, err))?;
 
         self.upload_and_send_file(
             to,
@@ -170,13 +173,13 @@ impl ThreemaClient {
         let recipient_key = self
             .lookup_pubkey(to)
             .await
-            .map_err(|e| pubkey_lookup_err(to, e))?;
+            .map_err(|err| pubkey_lookup_err(*to, err))?;
 
         let is_png = media_type == "image/png";
         let thumbnail = match generate_thumbnail(image_data, is_png) {
             Ok(thumb) => Some(thumb),
-            Err(e) => {
-                tracing::warn!("Failed to generate thumbnail: {}", e);
+            Err(err) => {
+                tracing::warn!("Failed to generate thumbnail: {}", err);
                 None
             }
         };
@@ -195,7 +198,10 @@ impl ThreemaClient {
     }
 
     /// Encrypt, upload, and send a file message.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "internal helper grouping upload+send params"
+    )]
     async fn upload_and_send_file(
         &self,
         to: &ThreemaId,
@@ -208,14 +214,16 @@ impl ThreemaClient {
         recipient_key: &RecipientKey,
     ) -> Result<MessageId, SendError> {
         // Parse media type
-        let media_type: mime::Mime = media_type
-            .parse()
-            .unwrap_or_else(|_| "application/octet-stream".parse().unwrap());
+        let media_type: mime::Mime = media_type.parse().unwrap_or_else(|_| {
+            "application/octet-stream"
+                .parse()
+                .expect("valid fallback media type")
+        });
 
         // Encrypt file (and thumbnail) with a random symmetric key
         let file = FileData {
             file: file_data.to_vec(),
-            thumbnail: thumbnail.as_ref().map(|t| t.data.clone()),
+            thumbnail: thumbnail.as_ref().map(|th| th.data.clone()),
         };
         let (encrypted, encryption_key) =
             encrypt_file_data(&file).map_err(SendError::FileEncrypt)?;
@@ -250,7 +258,7 @@ impl ThreemaClient {
             blob_id,
             encryption_key,
             media_type.to_string(),
-            file_data.len() as u32,
+            u32::try_from(file_data.len()).expect("file size fits in u32"),
         )
         .rendering_type(rendering_type);
 
@@ -294,7 +302,7 @@ impl ThreemaClient {
 
 /// Map a public key lookup error to a [`SendError`].
 fn pubkey_lookup_err(
-    identity: &ThreemaId,
+    identity: ThreemaId,
     err: ApiOrCacheError<InMemoryPublicKeyCacheError>,
 ) -> SendError {
     let identity = identity.to_string();
