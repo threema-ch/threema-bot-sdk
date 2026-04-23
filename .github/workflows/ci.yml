@@ -53,7 +53,7 @@ jobs:
           toolchain: "${RUST_VERSION}"
           components: clippy
       - name: Check if there are clippy warnings
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy --all-features --all-targets -- -D warnings
 
   audit:
     name: run cargo audit
