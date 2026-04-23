@@ -28,7 +28,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "tracing"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-config = { version = "0.14", default-features = false, features = ["toml"] }
+config = { version = "0.15", default-features = false, features = ["toml"] }
 crypto_box = { version = "0.9", features = ["serde"] } # enables serde for SecretKey in config
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 mime = "0.3"
