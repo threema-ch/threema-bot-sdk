@@ -11,6 +11,6 @@ Possible log types:
 - `[fixed]` for any bug fixes.
 - `[security]` to invite users to upgrade in case of vulnerabilities.
 
-### v0.1.0 (unreleased)
+### v0.1.0 (2026-04-24)
 
 - Initial release
