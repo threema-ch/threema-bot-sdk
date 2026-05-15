@@ -12,7 +12,6 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::DateTime;
 use moka::future::Cache as AsyncCache;
 use serde_json::json;
 use threema_gateway::{
@@ -320,13 +319,17 @@ async fn webhook_handler<H: MessageHandler>(
         }
     };
 
-    // Verify timestamp
-    if let Err(err) = validate_timestamp(msg.date, state.config.server.max_webhook_age_seconds) {
-        tracing::warn!("Webhook verification failed from {}: {}", msg.from, err);
-        // Return 200 OK to prevent Threema Gateway delivery reattempts,
-        // if message is too old then retrying will not help.
-        return (StatusCode::OK, "Invalid timestamp");
-    }
+    // Validate and parse timestamp
+    let created_at = match validate_timestamp(msg.date, state.config.server.max_webhook_age_seconds)
+    {
+        Ok(ts) => ts,
+        Err(err) => {
+            tracing::warn!("Webhook verification failed from {}: {}", msg.from, err);
+            // Return 200 OK to prevent Threema Gateway delivery reattempts,
+            // if message is too old then retrying will not help.
+            return (StatusCode::OK, "Invalid timestamp");
+        }
+    };
 
     // Check for duplicate message
     if state
@@ -397,9 +400,6 @@ async fn webhook_handler<H: MessageHandler>(
             // simplify this by calling `handle_classic_reaction` for every message ID.
 
             // Create `MessageContext` for every message ID
-            #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
-            let created_at = DateTime::from_timestamp(msg.date as i64, 0)
-                .expect("message timestamp already validated");
             let contexts = delivery_receipt
                 .message_ids
                 .as_slice()
@@ -530,9 +530,7 @@ async fn webhook_handler<H: MessageHandler>(
         message_id: msg.message_id,
         sender_identity: msg.from,
         sender_nickname: msg.nickname,
-        #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
-        created_at: DateTime::from_timestamp(msg.date as i64, 0)
-            .expect("message timestamp already validated"),
+        created_at,
     };
     let state_clone = Arc::clone(&state);
     match dispatchable {

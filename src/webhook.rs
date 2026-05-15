@@ -2,7 +2,9 @@
 
 use std::time::SystemTime;
 
-use crate::errors::WebhookError;
+use chrono::{DateTime, Utc};
+
+use crate::errors::TimestampValidationError;
 
 /// Return the current Unix timestamp in seconds.
 fn unix_timestamp_now() -> i64 {
@@ -15,31 +17,32 @@ fn unix_timestamp_now() -> i64 {
 
 /// Validate webhook timestamp to prevent replay attacks.
 ///
-/// Rejects webhooks that are too old or too far in the future based on
-/// `max_age_seconds`. Returns the parsed timestamp on success.
+/// Rejects webhooks that are too old or too far in the future based on `max_age_seconds`. Returns
+/// the validated timestamp as a [`DateTime<Utc>`] on success.
 pub(crate) fn validate_timestamp(
     timestamp: usize,
     max_offset_seconds: i64,
-) -> Result<usize, WebhookError> {
+) -> Result<DateTime<Utc>, TimestampValidationError> {
     let current_timestamp = unix_timestamp_now();
-    #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
-    let timestamp_i64 = timestamp as i64;
+    let timestamp_i64 =
+        i64::try_from(timestamp).map_err(|_| TimestampValidationError::OutOfRange(timestamp))?;
     let age_seconds = current_timestamp.saturating_sub(timestamp_i64);
 
     if age_seconds > max_offset_seconds {
-        return Err(WebhookError::TooOld {
+        return Err(TimestampValidationError::TooOld {
             age_seconds,
             max_seconds: max_offset_seconds,
         });
     }
     if age_seconds < max_offset_seconds.saturating_neg() {
-        return Err(WebhookError::FromFuture {
+        return Err(TimestampValidationError::FromFuture {
             offset_seconds: age_seconds.abs(),
             max_seconds: max_offset_seconds,
         });
     }
 
-    Ok(timestamp)
+    Ok(DateTime::from_timestamp(timestamp_i64, 0)
+        .expect("timestamp validated to be within representable range"))
 }
 
 #[cfg(test)]
@@ -96,6 +99,16 @@ mod tests {
         fn far_future_is_rejected() {
             let far_future = now_as_usize().saturating_add(max_age_as_usize() + 1);
             assert!(validate_timestamp(far_future, MAX_AGE).is_err());
+        }
+
+        #[test]
+        fn out_of_i64_range_is_rejected() {
+            // Values that don't fit in i64 must be rejected outright; they must not be
+            // allowed to wrap into a value close to the current time.
+            assert!(matches!(
+                validate_timestamp(usize::MAX, MAX_AGE),
+                Err(TimestampValidationError::OutOfRange(usize::MAX))
+            ));
         }
     }
 }

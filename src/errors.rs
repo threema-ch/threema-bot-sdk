@@ -113,7 +113,11 @@ pub(crate) enum SendError {
 
 /// Error when validating a webhook timestamp.
 #[derive(Debug, Error)]
-pub(crate) enum WebhookError {
+pub(crate) enum TimestampValidationError {
+    /// Webhook timestamp value is outside the valid range of a Unix timestamp.
+    #[error("webhook timestamp out of valid range: {0}")]
+    OutOfRange(usize),
+
     /// Webhook timestamp is too old.
     #[error("webhook timestamp too old: age={age_seconds}s (max={max_seconds}s)")]
     TooOld { age_seconds: i64, max_seconds: i64 },
