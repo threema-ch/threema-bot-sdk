@@ -266,6 +266,10 @@ impl ThreemaClient {
             builder = builder.thumbnail(thumb_id, &thumb.media_type);
         }
 
+        if let Some(thumb) = &thumbnail {
+            builder = builder.dimensions(thumb.original_height, thumb.original_width);
+        }
+
         if let Some(name) = file_name {
             builder = builder.file_name(name);
         }
@@ -312,10 +316,12 @@ fn pubkey_lookup_err(
     }
 }
 
-/// Generated thumbnail data with its media type.
+/// Generated thumbnail data with its media type and the original image dimensions.
 struct Thumbnail {
     data: Vec<u8>,
     media_type: String,
+    original_width: u32,
+    original_height: u32,
 }
 
 /// Generate a thumbnail from image data.
@@ -328,6 +334,10 @@ fn generate_thumbnail(image_data: &[u8], png: bool) -> Result<Thumbnail, image::
     let img = ImageReader::new(Cursor::new(image_data))
         .with_guessed_format()?
         .decode()?;
+
+    // Extract dimensions
+    let original_width = img.width();
+    let original_height = img.height();
 
     // Resize to thumbnail size (max 256x256, preserving aspect ratio)
     let thumbnail = img.thumbnail(256, 256);
@@ -345,6 +355,8 @@ fn generate_thumbnail(image_data: &[u8], png: bool) -> Result<Thumbnail, image::
         Ok(Thumbnail {
             data: bytes,
             media_type: "image/png".into(),
+            original_width,
+            original_height,
         })
     } else {
         let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 80);
@@ -352,6 +364,8 @@ fn generate_thumbnail(image_data: &[u8], png: bool) -> Result<Thumbnail, image::
         Ok(Thumbnail {
             data: bytes,
             media_type: "image/jpeg".into(),
+            original_width,
+            original_height,
         })
     }
 }
