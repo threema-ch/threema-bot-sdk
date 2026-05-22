@@ -29,7 +29,7 @@ cargo test
 cargo check
 
 # Lint
-cargo clippy
+cargo clippy --all-targets
 ```
 
 ## Conventions

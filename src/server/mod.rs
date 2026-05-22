@@ -367,7 +367,7 @@ async fn webhook_handler<H: MessageHandler>(
             let classic_reaction: Result<ClassicReaction, String> =
                 delivery_receipt.receipt.try_into();
             if let Ok(reaction) = classic_reaction
-                && state.config.threema.allowed_users.contains(&msg.from)
+                && is_sender_allowed(&state.config.threema.allowed_users, msg.from)
             {
                 // Note: The protocol allows reacting to multiple message IDs simultaneously. Since this is
                 // rarely used and makes logic complex for the downstream bot implementor, we simplify this by
@@ -456,9 +456,7 @@ async fn webhook_handler<H: MessageHandler>(
     };
 
     // Check allowlist (empty list = allow anybody)
-    if !state.config.threema.allowed_users.is_empty()
-        && !state.config.threema.allowed_users.contains(&msg.from)
-    {
+    if !is_sender_allowed(&state.config.threema.allowed_users, msg.from) {
         tracing::warn!("Access denied for {}", msg.from);
         let api = state.threema_client.api().clone();
         let from = msg.from;
@@ -652,6 +650,13 @@ async fn process_message<H: MessageHandler>(
     Ok(())
 }
 
+/// Returns true if `sender` is permitted to use the bot.
+///
+/// An empty `allowed_users` list means everyone is allowed.
+fn is_sender_allowed(allowed_users: &[ThreemaId], sender: ThreemaId) -> bool {
+    allowed_users.is_empty() || allowed_users.contains(&sender)
+}
+
 /// Execute an [`Action`] returned by a handler method.
 async fn handle_action<H: MessageHandler>(
     state: &Arc<AppState<H>>,
@@ -671,4 +676,48 @@ async fn handle_action<H: MessageHandler>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod is_sender_allowed {
+        use threema_gateway::protocol::ThreemaId;
+
+        use super::*;
+
+        fn id(id_str: &str) -> ThreemaId {
+            id_str.parse().expect("valid Threema ID")
+        }
+
+        #[test]
+        fn empty_list_allows_anyone() {
+            // Regression: empty allowed_users must allow reactions (and text messages),
+            // not block them. Vec::contains returns false on an empty list, so the check
+            // must guard with is_empty() first.
+            assert!(is_sender_allowed(&[], id("AAAAAAAA")));
+            assert!(is_sender_allowed(&[], id("BBBBBBBB")));
+        }
+
+        #[test]
+        fn listed_sender_is_allowed() {
+            let allowed = vec![id("AAAAAAAA")];
+            assert!(is_sender_allowed(&allowed, id("AAAAAAAA")));
+        }
+
+        #[test]
+        fn unlisted_sender_is_denied() {
+            let allowed = vec![id("AAAAAAAA")];
+            assert!(!is_sender_allowed(&allowed, id("BBBBBBBB")));
+        }
+
+        #[test]
+        fn multiple_entries() {
+            let allowed = vec![id("AAAAAAAA"), id("BBBBBBBB")];
+            assert!(is_sender_allowed(&allowed, id("AAAAAAAA")));
+            assert!(is_sender_allowed(&allowed, id("BBBBBBBB")));
+            assert!(!is_sender_allowed(&allowed, id("CCCCCCCC")));
+        }
+    }
 }
