@@ -363,54 +363,67 @@ async fn webhook_handler<H: MessageHandler>(
                 delivery_receipt
             );
 
-            // Handle acknowledgements
-            let classic_reaction: Result<ClassicReaction, String> =
-                delivery_receipt.receipt.try_into();
-            if let Ok(reaction) = classic_reaction
-                && state.config.threema.allowed_users.contains(&msg.from)
-            {
-                // Note: The protocol allows reacting to multiple message IDs simultaneously. Since this is
-                // rarely used and makes logic complex for the downstream bot implementor, we simplify this by
-                // calling `handle_classic_reaction` for every message ID.
+            // Only process reactions
+            let Ok(reaction): Result<ClassicReaction, _> = delivery_receipt.receipt.try_into()
+            else {
+                tracing::debug!(
+                    "Dropping delivery receipt {:?} - not currently supported in bot SDK",
+                    delivery_receipt.receipt,
+                );
+                return (axum::http::StatusCode::OK, "OK");
+            };
 
-                // Create `MessageContext` for every message ID
-                #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
-                let created_at = DateTime::from_timestamp(msg.date as i64, 0)
-                    .expect("message timestamp already validated");
-                let contexts = delivery_receipt
-                    .message_ids
-                    .as_slice()
-                    .iter()
-                    .copied()
-                    .map(|message_id| MessageContext {
-                        message_id,
-                        sender_identity: msg.from,
-                        sender_nickname: msg.nickname.clone(),
-                        created_at,
-                    })
-                    .collect::<Vec<_>>();
-
-                let handler = Arc::clone(&state.handler);
-                let sender_key = sender_public_key.clone();
-                tokio::spawn(async move {
-                    for context in contexts {
-                        match handler.handle_classic_reaction(&context, reaction).await {
-                            Ok(action) => {
-                                if let Err(err) =
-                                    handle_action(&state, &context, &msg.from, &sender_key, action)
-                                        .await
-                                {
-                                    tracing::error!(
-                                        "Failed to send classic reaction response: {}",
-                                        err
-                                    );
-                                }
-                            }
-                            Err(err) => tracing::error!("Error handling classic reaction: {}", err),
-                        }
-                    }
-                });
+            // Check allowed sender list
+            if !is_sender_allowed(&state.config.threema.allowed_users, msg.from) {
+                tracing::warn!(
+                    "Ignoring classic reaction from unlisted sender {}",
+                    msg.from
+                );
+                return (axum::http::StatusCode::OK, "OK");
             }
+
+            // Note: The protocol allows reacting to multiple message IDs simultaneously. Since this
+            // is rarely used and makes logic complex for the downstream bot implementor, we
+            // simplify this by calling `handle_classic_reaction` for every message ID.
+
+            // Create `MessageContext` for every message ID
+            #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
+            let created_at = DateTime::from_timestamp(msg.date as i64, 0)
+                .expect("message timestamp already validated");
+            let contexts = delivery_receipt
+                .message_ids
+                .as_slice()
+                .iter()
+                .copied()
+                .map(|message_id| MessageContext {
+                    message_id,
+                    sender_identity: msg.from,
+                    sender_nickname: msg.nickname.clone(),
+                    created_at,
+                })
+                .collect::<Vec<_>>();
+
+            let handler = Arc::clone(&state.handler);
+            let sender_key = sender_public_key.clone();
+            tokio::spawn(async move {
+                for context in contexts {
+                    match handler.handle_classic_reaction(&context, reaction).await {
+                        Ok(action) => {
+                            if let Err(err) =
+                                handle_action(&state, &context, &msg.from, &sender_key, action)
+                                    .await
+                            {
+                                tracing::error!(
+                                    "Failed to send classic reaction response: {}",
+                                    err
+                                );
+                            }
+                        }
+                        Err(err) => tracing::error!("Error handling classic reaction: {}", err),
+                    }
+                }
+            });
+
             return (axum::http::StatusCode::OK, "OK");
         }
         E2eMessage::File(_file_message) => {
@@ -456,9 +469,7 @@ async fn webhook_handler<H: MessageHandler>(
     };
 
     // Check allowlist (empty list = allow anybody)
-    if !state.config.threema.allowed_users.is_empty()
-        && !state.config.threema.allowed_users.contains(&msg.from)
-    {
+    if !is_sender_allowed(&state.config.threema.allowed_users, msg.from) {
         tracing::warn!("Access denied for {}", msg.from);
         let api = state.threema_client.api().clone();
         let from = msg.from;
@@ -652,6 +663,13 @@ async fn process_message<H: MessageHandler>(
     Ok(())
 }
 
+/// Returns true if `sender` is permitted to use the bot.
+///
+/// An empty `allowed_users` list means everyone is allowed.
+fn is_sender_allowed(allowed_users: &[ThreemaId], sender: ThreemaId) -> bool {
+    allowed_users.is_empty() || allowed_users.contains(&sender)
+}
+
 /// Execute an [`Action`] returned by a handler method.
 async fn handle_action<H: MessageHandler>(
     state: &Arc<AppState<H>>,
@@ -671,4 +689,48 @@ async fn handle_action<H: MessageHandler>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod is_sender_allowed {
+        use threema_gateway::protocol::ThreemaId;
+
+        use super::*;
+
+        fn id(id_str: &str) -> ThreemaId {
+            id_str.parse().expect("valid Threema ID")
+        }
+
+        #[test]
+        fn empty_list_allows_anyone() {
+            // Regression: empty allowed_users must allow reactions (and text messages),
+            // not block them. Vec::contains returns false on an empty list, so the check
+            // must guard with is_empty() first.
+            assert!(is_sender_allowed(&[], id("AAAAAAAA")));
+            assert!(is_sender_allowed(&[], id("BBBBBBBB")));
+        }
+
+        #[test]
+        fn listed_sender_is_allowed() {
+            let allowed = vec![id("AAAAAAAA")];
+            assert!(is_sender_allowed(&allowed, id("AAAAAAAA")));
+        }
+
+        #[test]
+        fn unlisted_sender_is_denied() {
+            let allowed = vec![id("AAAAAAAA")];
+            assert!(!is_sender_allowed(&allowed, id("BBBBBBBB")));
+        }
+
+        #[test]
+        fn multiple_entries() {
+            let allowed = vec![id("AAAAAAAA"), id("BBBBBBBB")];
+            assert!(is_sender_allowed(&allowed, id("AAAAAAAA")));
+            assert!(is_sender_allowed(&allowed, id("BBBBBBBB")));
+            assert!(!is_sender_allowed(&allowed, id("CCCCCCCC")));
+        }
+    }
 }
