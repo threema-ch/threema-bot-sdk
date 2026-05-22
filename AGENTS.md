@@ -45,6 +45,8 @@ Imports:
   types at the top level
 - Don't use `super::*` imports (except in test modules), instead use `crate::`
   imports
+- Do not re-export types from `threema-gateway`, users should import directly
+  from that crate
 
 Testing:
 

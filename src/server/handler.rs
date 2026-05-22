@@ -9,6 +9,7 @@ use threema_gateway::{
         MessageId, ThreemaId,
         e2e::{
             delivery_receipt::DeliveryReceipt,
+            location::LocationMessage,
             typing_indicator::{TypingIndicatorMessage, TypingStatus},
         },
     },
@@ -274,6 +275,23 @@ pub trait MessageHandler: Send + Sync + 'static {
         &self,
         ctx: &MessageContext,
         reaction: ClassicReaction,
+    ) -> HandlerResult<Action> {
+        Ok(Action::Ignore)
+    }
+
+    /// Handle an incoming location message.
+    ///
+    /// Called when the user shares a location. Use `typing.send()` to show a
+    /// typing indicator while processing. The indicator is automatically reset
+    /// when this method returns.
+    ///
+    /// The default implementation ignores the message.
+    #[expect(unused_variables, reason = "Default trait method impl")]
+    async fn handle_location(
+        &self,
+        ctx: &MessageContext,
+        location: &LocationMessage,
+        typing: &TypingHandle,
     ) -> HandlerResult<Action> {
         Ok(Action::Ignore)
     }

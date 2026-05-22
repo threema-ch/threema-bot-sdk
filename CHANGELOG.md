@@ -11,6 +11,10 @@ Possible log types:
 - `[fixed]` for any bug fixes.
 - `[security]` to invite users to upgrade in case of vulnerabilities.
 
+### Unreleased
+
+- Add location message support through `MessageHandler::handle_location`
+
 ### v0.1.0 (2026-04-24)
 
 - Initial release

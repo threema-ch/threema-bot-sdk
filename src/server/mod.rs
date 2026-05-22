@@ -19,7 +19,10 @@ use threema_gateway::{
     errors::ApiError as ThreemaApiError,
     protocol::{
         MessageId, ThreemaId,
-        e2e::delivery_receipt::{DeliveryReceipt, DeliveryReceiptMessage},
+        e2e::{
+            delivery_receipt::{DeliveryReceipt, DeliveryReceiptMessage},
+            location::LocationMessage,
+        },
     },
 };
 
@@ -282,6 +285,12 @@ async fn health_handler() -> impl IntoResponse {
     )
 }
 
+/// A message type that goes through the shared dispatch pipeline.
+enum Dispatchable {
+    Text(String),
+    Location(LocationMessage),
+}
+
 /// Webhook handler.
 ///
 /// This handles incoming messages sent from Threema Gateway.
@@ -350,11 +359,11 @@ async fn webhook_handler<H: MessageHandler>(
         }
     };
 
-    // Extract text or handle other message types
-    let text = match e2e_message {
+    // Route message to a dispatchable payload or handle special cases inline
+    let dispatchable = match e2e_message {
         E2eMessage::Text(text) => {
             tracing::debug!("Received text message from {}", msg.from);
-            text
+            Dispatchable::Text(text)
         }
         E2eMessage::DeliveryReceipt(delivery_receipt) => {
             tracing::debug!(
@@ -426,12 +435,12 @@ async fn webhook_handler<H: MessageHandler>(
 
             return (axum::http::StatusCode::OK, "OK");
         }
+        E2eMessage::Location(location_message) => {
+            tracing::debug!("Received location message from {}", msg.from);
+            Dispatchable::Location(location_message)
+        }
         E2eMessage::File(_file_message) => {
             tracing::debug!("Received file message from {}", msg.from);
-            return (axum::http::StatusCode::OK, "OK");
-        }
-        E2eMessage::Location(_location_message) => {
-            tracing::debug!("Received location message from {}", msg.from);
             return (axum::http::StatusCode::OK, "OK");
         }
         E2eMessage::TypingIndicator(typing_indicator_message) => {
@@ -499,15 +508,15 @@ async fn webhook_handler<H: MessageHandler>(
     )
     .await;
 
-    // Parse command
-    let command = state.commands.parse(&text);
-
     // Handle priority commands (bypass rate limit)
-    if state
-        .handle_priority_command(&command, &msg, &sender_public_key)
-        .await
-    {
-        return (axum::http::StatusCode::OK, "OK");
+    if let Dispatchable::Text(text) = &dispatchable {
+        let command = state.commands.parse(text);
+        if state
+            .handle_priority_command(&command, &msg, &sender_public_key)
+            .await
+        {
+            return (axum::http::StatusCode::OK, "OK");
+        }
     }
 
     // Check rate limits
@@ -515,8 +524,7 @@ async fn webhook_handler<H: MessageHandler>(
         return (axum::http::StatusCode::TOO_MANY_REQUESTS, "Rate limited");
     }
 
-    // Process message in background
-    let state_clone = Arc::clone(&state);
+    // Build context and spawn background processing task
     let ctx = MessageContext {
         message_id: msg.message_id,
         sender_identity: msg.from,
@@ -525,11 +533,22 @@ async fn webhook_handler<H: MessageHandler>(
         created_at: DateTime::from_timestamp(msg.date as i64, 0)
             .expect("message timestamp already validated"),
     };
-    tokio::spawn(async move {
-        if let Err(err) = process_message(state_clone, ctx, sender_public_key, text).await {
-            tracing::error!("Error processing message from {}: {}", msg.from, err);
-        }
-    });
+    let state_clone = Arc::clone(&state);
+    match dispatchable {
+        Dispatchable::Text(text) => tokio::spawn(async move {
+            if let Err(err) = process_text_message(state_clone, ctx, sender_public_key, text).await
+            {
+                tracing::error!("Error processing text from {}: {}", msg.from, err);
+            }
+        }),
+        Dispatchable::Location(location) => tokio::spawn(async move {
+            if let Err(err) =
+                process_location_message(state_clone, ctx, sender_public_key, location).await
+            {
+                tracing::error!("Error processing location from {}: {}", msg.from, err);
+            }
+        }),
+    };
 
     (axum::http::StatusCode::OK, "OK")
 }
@@ -589,7 +608,7 @@ async fn send_responses<H: MessageHandler>(
 }
 
 /// Process a text message.
-async fn process_message<H: MessageHandler>(
+async fn process_text_message<H: MessageHandler>(
     state: Arc<AppState<H>>,
     ctx: MessageContext,
     sender_public_key: RecipientKey,
@@ -668,6 +687,52 @@ async fn process_message<H: MessageHandler>(
 /// An empty `allowed_users` list means everyone is allowed.
 fn is_sender_allowed(allowed_users: &[ThreemaId], sender: ThreemaId) -> bool {
     allowed_users.is_empty() || allowed_users.contains(&sender)
+}
+
+/// Process a location message.
+async fn process_location_message<H: MessageHandler>(
+    state: Arc<AppState<H>>,
+    ctx: MessageContext,
+    sender_public_key: RecipientKey,
+    location: LocationMessage,
+) -> Result<(), SendError> {
+    let typing_handle = TypingHandle::new(
+        state.threema_client.api().clone(),
+        ctx.sender_identity,
+        sender_public_key.clone(),
+    );
+
+    let result = state
+        .handler
+        .handle_location(&ctx, &location, &typing_handle)
+        .await;
+
+    typing_handle.stop().await;
+
+    match result {
+        Ok(action) => {
+            handle_action(
+                &state,
+                &ctx,
+                &ctx.sender_identity,
+                &sender_public_key,
+                action,
+            )
+            .await?;
+        }
+        Err(err) => {
+            tracing::error!("Handler error for {}: {}", ctx.sender_identity, err);
+            send_text(
+                state.threema_client.api(),
+                &ctx.sender_identity,
+                commands::messages::GENERIC_ERROR,
+                &sender_public_key,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Execute an [`Action`] returned by a handler method.
