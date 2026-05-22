@@ -363,54 +363,67 @@ async fn webhook_handler<H: MessageHandler>(
                 delivery_receipt
             );
 
-            // Handle acknowledgements
-            let classic_reaction: Result<ClassicReaction, String> =
-                delivery_receipt.receipt.try_into();
-            if let Ok(reaction) = classic_reaction
-                && is_sender_allowed(&state.config.threema.allowed_users, msg.from)
-            {
-                // Note: The protocol allows reacting to multiple message IDs simultaneously. Since this is
-                // rarely used and makes logic complex for the downstream bot implementor, we simplify this by
-                // calling `handle_classic_reaction` for every message ID.
+            // Only process reactions
+            let Ok(reaction): Result<ClassicReaction, _> = delivery_receipt.receipt.try_into()
+            else {
+                tracing::debug!(
+                    "Dropping delivery receipt {:?} - not currently supported in bot SDK",
+                    delivery_receipt.receipt,
+                );
+                return (axum::http::StatusCode::OK, "OK");
+            };
 
-                // Create `MessageContext` for every message ID
-                #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
-                let created_at = DateTime::from_timestamp(msg.date as i64, 0)
-                    .expect("message timestamp already validated");
-                let contexts = delivery_receipt
-                    .message_ids
-                    .as_slice()
-                    .iter()
-                    .copied()
-                    .map(|message_id| MessageContext {
-                        message_id,
-                        sender_identity: msg.from,
-                        sender_nickname: msg.nickname.clone(),
-                        created_at,
-                    })
-                    .collect::<Vec<_>>();
-
-                let handler = Arc::clone(&state.handler);
-                let sender_key = sender_public_key.clone();
-                tokio::spawn(async move {
-                    for context in contexts {
-                        match handler.handle_classic_reaction(&context, reaction).await {
-                            Ok(action) => {
-                                if let Err(err) =
-                                    handle_action(&state, &context, &msg.from, &sender_key, action)
-                                        .await
-                                {
-                                    tracing::error!(
-                                        "Failed to send classic reaction response: {}",
-                                        err
-                                    );
-                                }
-                            }
-                            Err(err) => tracing::error!("Error handling classic reaction: {}", err),
-                        }
-                    }
-                });
+            // Check allowed sender list
+            if !is_sender_allowed(&state.config.threema.allowed_users, msg.from) {
+                tracing::warn!(
+                    "Ignoring classic reaction from unlisted sender {}",
+                    msg.from
+                );
+                return (axum::http::StatusCode::OK, "OK");
             }
+
+            // Note: The protocol allows reacting to multiple message IDs simultaneously. Since this
+            // is rarely used and makes logic complex for the downstream bot implementor, we
+            // simplify this by calling `handle_classic_reaction` for every message ID.
+
+            // Create `MessageContext` for every message ID
+            #[expect(clippy::cast_possible_wrap, reason = "timestamp fits in i64")]
+            let created_at = DateTime::from_timestamp(msg.date as i64, 0)
+                .expect("message timestamp already validated");
+            let contexts = delivery_receipt
+                .message_ids
+                .as_slice()
+                .iter()
+                .copied()
+                .map(|message_id| MessageContext {
+                    message_id,
+                    sender_identity: msg.from,
+                    sender_nickname: msg.nickname.clone(),
+                    created_at,
+                })
+                .collect::<Vec<_>>();
+
+            let handler = Arc::clone(&state.handler);
+            let sender_key = sender_public_key.clone();
+            tokio::spawn(async move {
+                for context in contexts {
+                    match handler.handle_classic_reaction(&context, reaction).await {
+                        Ok(action) => {
+                            if let Err(err) =
+                                handle_action(&state, &context, &msg.from, &sender_key, action)
+                                    .await
+                            {
+                                tracing::error!(
+                                    "Failed to send classic reaction response: {}",
+                                    err
+                                );
+                            }
+                        }
+                        Err(err) => tracing::error!("Error handling classic reaction: {}", err),
+                    }
+                }
+            });
+
             return (axum::http::StatusCode::OK, "OK");
         }
         E2eMessage::File(_file_message) => {
