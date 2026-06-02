@@ -61,6 +61,6 @@ Other:
 
 - Sort dependencies (in `Cargo.toml`) and imports alphabetically
 - Check if code compiles with `cargo check`
-- Lint code with `cargo clippy`
+- Lint code with `cargo clippy --all-targets`
 - At the end, when everything else works fine, ALWAYS format code with rustfmt
   through `cargo fmt`

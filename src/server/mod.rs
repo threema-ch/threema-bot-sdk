@@ -320,16 +320,16 @@ async fn webhook_handler<H: MessageHandler>(
     };
 
     // Validate and parse timestamp
-    let created_at = match validate_timestamp(msg.date, state.config.server.max_webhook_age_seconds)
-    {
-        Ok(ts) => ts,
-        Err(err) => {
-            tracing::warn!("Webhook verification failed from {}: {}", msg.from, err);
-            // Return 200 OK to prevent Threema Gateway delivery reattempts,
-            // if message is too old then retrying will not help.
-            return (StatusCode::OK, "Invalid timestamp");
-        }
-    };
+    let created_at =
+        match validate_timestamp(msg.created_at, state.config.server.max_webhook_age_seconds) {
+            Ok(ts) => ts,
+            Err(err) => {
+                tracing::warn!("Webhook verification failed from {}: {}", msg.from, err);
+                // Return 200 OK to prevent Threema Gateway delivery reattempts,
+                // if message is too old then retrying will not help.
+                return (StatusCode::OK, "Invalid timestamp");
+            }
+        };
 
     // Check for duplicate message
     if state
