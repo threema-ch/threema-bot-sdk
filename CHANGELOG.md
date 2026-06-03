@@ -11,9 +11,10 @@ Possible log types:
 - `[fixed]` for any bug fixes.
 - `[security]` to invite users to upgrade in case of vulnerabilities.
 
-### Unreleased
+### v0.2.0 (unreleased)
 
 - Add location message support through `MessageHandler::handle_location`
+- Bump `threema-gateway` dependency from 0.20 to 0.21
 
 ### v0.1.0 (2026-04-24)
 
