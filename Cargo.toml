@@ -1,6 +1,6 @@
 [package]
 name = "threema-gateway-bot"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Threema GmbH <opensource@threema.ch>"]
 documentation = "https://docs.rs/threema-gateway-bot"
 repository = "https://github.com/threema-ch/threema-gateway-bot/"

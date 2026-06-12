@@ -11,10 +11,13 @@ Possible log types:
 - `[fixed]` for any bug fixes.
 - `[security]` to invite users to upgrade in case of vulnerabilities.
 
-### v0.2.0 (unreleased)
+### v0.2.0 (2026-06-12)
 
-- Add location message support through `MessageHandler::handle_location`
-- Bump `threema-gateway` dependency from 0.20 to 0.21
+- [added] Add location message support through `MessageHandler::handle_location` (#8)
+- [fixed] Fix handling of reactions when `allowed_users` is empty (#10)
+- [changed] Include dimensions for image messages (#7)
+- [changed] Improve timestamp handling (#9)
+- [changed] Bump `threema-gateway` dependency from 0.20 to 0.21
 
 ### v0.1.0 (2026-04-24)
 
