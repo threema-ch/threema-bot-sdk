@@ -1,0 +1,14 @@
+---
+source: src/commands.rs
+expression: "reg.help_text(&HelpVisibility::all())"
+---
+Available Commands:
+
+help - Show this help message
+echo - Echo back text
+ping - Check if bot is alive
+
+*Admin commands:*
+
+restart - Restart the bot
+kick - Remove a user

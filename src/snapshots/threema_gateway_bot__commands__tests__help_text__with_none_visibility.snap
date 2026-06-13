@@ -1,0 +1,7 @@
+---
+source: src/commands.rs
+expression: "reg.help_text(&HelpVisibility::none())"
+---
+Available Commands:
+
+/help - Show this help message

@@ -25,6 +25,14 @@ pub enum InitError {
     /// Failed to construct the Threema Gateway API client.
     #[error("failed to create API client: {0}")]
     ApiBuilder(#[from] ApiBuilderError),
+
+    /// Invalid command registration: The same command was registered more than once within one
+    /// section (one group or the ungrouped commands), or two groups share an ID.
+    ///
+    /// Note that registering the same command in *different* sections is allowed, see
+    /// [`Commands::group`](crate::commands::Commands::group).
+    #[error("invalid command registration: {0}")]
+    InvalidCommands(String),
 }
 
 /// Configuration validation error.

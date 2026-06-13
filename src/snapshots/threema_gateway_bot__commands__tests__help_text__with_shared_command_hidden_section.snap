@@ -1,0 +1,12 @@
+---
+source: src/commands.rs
+expression: "reg.help_text(&HelpVisibility::all().hide_group(\"admin\"))"
+---
+Available Commands:
+
+/help - Show this help message
+
+*Monitoring:*
+
+/uptime - Show uptime
+/status - Show system status

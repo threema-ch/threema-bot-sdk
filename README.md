@@ -12,7 +12,7 @@ with:
 - **Webhook handling** to receive and validate Threema Gateway messages
 - **Configuration system** based on TOML files and env vars, extensible by your bot
 - **Rate limiting** and **caching** built-in
-- **Command parsing** infrastructure
+- **Command parsing** infrastructure with grouped, per-user help text
 
 The command parsing infrastructure allows for both slash-command style (`/remind 30m`) or
 word-command style (`remind 30m`).

@@ -96,16 +96,27 @@ impl<H: MessageHandler> AppState<H> {
     async fn handle_priority_command(
         &self,
         command: &ParsedCommand<'_>,
-        msg: &IncomingMessage,
+        ctx: &MessageContext,
         sender_public_key: &RecipientKey,
     ) -> bool {
         match command {
             ParsedCommand::Help => {
-                let help_text = self.commands.help_text();
+                let text = match self.handler.help_visibility(ctx).await {
+                    Ok(visibility) => self.commands.help_text(&visibility),
+                    Err(err) => {
+                        // Fail closed: Never fall back to full visibility
+                        tracing::error!(
+                            "Handler error in help_visibility for {}: {}",
+                            ctx.sender_identity,
+                            err
+                        );
+                        commands::messages::GENERIC_ERROR.to_owned()
+                    }
+                };
                 let _ = send_text(
                     self.threema_client.api(),
-                    &msg.from,
-                    &help_text,
+                    &ctx.sender_identity,
+                    &text,
                     sender_public_key,
                 )
                 .await;
@@ -167,7 +178,8 @@ pub struct BotServer<H: MessageHandler> {
 impl<H: MessageHandler> BotServer<H> {
     /// Create a new bot server.
     ///
-    /// Validates the configuration and constructs the Threema Gateway client.
+    /// Validates the configuration and the command registration, and constructs the Threema
+    /// Gateway client.
     ///
     /// Command configuration is read from the handler's
     /// [`description`](MessageHandler::description) and [`commands`](MessageHandler::commands)
@@ -181,7 +193,7 @@ impl<H: MessageHandler> BotServer<H> {
 
         // Build command registry from handler
         let description = handler.description().map(String::from);
-        let commands = CommandRegistry::new(description, H::commands());
+        let commands = CommandRegistry::new(description, H::commands())?;
 
         Ok(Self {
             config,
@@ -509,11 +521,19 @@ async fn webhook_handler<H: MessageHandler>(
     )
     .await;
 
+    // Build message context
+    let ctx = MessageContext {
+        message_id: msg.message_id,
+        sender_identity: msg.from,
+        sender_nickname: msg.nickname,
+        created_at,
+    };
+
     // Handle priority commands (bypass rate limit)
     if let Dispatchable::Text(text) = &dispatchable {
         let command = state.commands.parse(text);
         if state
-            .handle_priority_command(&command, &msg, &sender_public_key)
+            .handle_priority_command(&command, &ctx, &sender_public_key)
             .await
         {
             return (StatusCode::OK, "OK");
@@ -525,13 +545,7 @@ async fn webhook_handler<H: MessageHandler>(
         return (StatusCode::TOO_MANY_REQUESTS, "Rate limited");
     }
 
-    // Build context and spawn background processing task
-    let ctx = MessageContext {
-        message_id: msg.message_id,
-        sender_identity: msg.from,
-        sender_nickname: msg.nickname,
-        created_at,
-    };
+    // Spawn background processing task
     let state_clone = Arc::clone(&state);
     match dispatchable {
         Dispatchable::Text(text) => tokio::spawn(async move {
@@ -745,7 +759,20 @@ async fn handle_action<H: MessageHandler>(
     match action {
         Action::Ignore => {}
         Action::ShowHelp { prelude } => {
-            let text = state.commands.help_text_with_prelude(prelude.as_deref());
+            let text = match state.handler.help_visibility(ctx).await {
+                Ok(visibility) => state
+                    .commands
+                    .help_text_with_prelude(prelude.as_deref(), &visibility),
+                Err(err) => {
+                    // Fail closed: Never fall back to full visibility
+                    tracing::error!(
+                        "Handler error in help_visibility for {}: {}",
+                        ctx.sender_identity,
+                        err
+                    );
+                    commands::messages::GENERIC_ERROR.to_owned()
+                }
+            };
             send_text(state.threema_client.api(), recipient, &text, recipient_key).await?;
         }
         Action::Respond(responses) => {
