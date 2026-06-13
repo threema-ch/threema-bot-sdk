@@ -89,45 +89,6 @@ struct AppState<H: MessageHandler> {
 }
 
 impl<H: MessageHandler> AppState<H> {
-    /// Handle priority commands that bypass rate limiting.
-    ///
-    /// Returns `true` if the command was handled, `false` if it should continue through the normal
-    /// pipeline.
-    async fn handle_priority_command(
-        &self,
-        command: &ParsedCommand<'_>,
-        ctx: &MessageContext,
-        sender_public_key: &RecipientKey,
-    ) -> bool {
-        match command {
-            ParsedCommand::Help => {
-                let text = match self.handler.help_visibility(ctx).await {
-                    Ok(visibility) => self.commands.help_text(&visibility),
-                    Err(err) => {
-                        // Fail closed: Never fall back to full visibility
-                        tracing::error!(
-                            "Handler error in help_visibility for {}: {}",
-                            ctx.sender_identity,
-                            err
-                        );
-                        commands::messages::GENERIC_ERROR.to_owned()
-                    }
-                };
-                let _ = send_text(
-                    self.threema_client.api(),
-                    &ctx.sender_identity,
-                    &text,
-                    sender_public_key,
-                )
-                .await;
-                true
-            }
-            ParsedCommand::Registered { .. }
-            | ParsedCommand::Unknown { .. }
-            | ParsedCommand::None(_) => false,
-        }
-    }
-
     /// Check rate limit for a sender, sending notification if rate limited.
     ///
     /// Returns true if the request should proceed, false if rate limited.
@@ -521,31 +482,18 @@ async fn webhook_handler<H: MessageHandler>(
     )
     .await;
 
-    // Build message context
+    // Check rate limits
+    if !state.check_rate_limit(&msg.from, &sender_public_key).await {
+        return (StatusCode::TOO_MANY_REQUESTS, "Rate limited");
+    }
+
+    // Build context and spawn background processing task
     let ctx = MessageContext {
         message_id: msg.message_id,
         sender_identity: msg.from,
         sender_nickname: msg.nickname,
         created_at,
     };
-
-    // Handle priority commands (bypass rate limit)
-    if let Dispatchable::Text(text) = &dispatchable {
-        let command = state.commands.parse(text);
-        if state
-            .handle_priority_command(&command, &ctx, &sender_public_key)
-            .await
-        {
-            return (StatusCode::OK, "OK");
-        }
-    }
-
-    // Check rate limits
-    if !state.check_rate_limit(&msg.from, &sender_public_key).await {
-        return (StatusCode::TOO_MANY_REQUESTS, "Rate limited");
-    }
-
-    // Spawn background processing task
     let state_clone = Arc::clone(&state);
     match dispatchable {
         Dispatchable::Text(text) => tokio::spawn(async move {
@@ -627,9 +575,6 @@ async fn process_text_message<H: MessageHandler>(
     sender_public_key: RecipientKey,
     text: String,
 ) -> Result<(), SendError> {
-    // Note: We already parsed the command in the request handler. However, we cannot move it into
-    // this handle function without cloning the values due to lifetimes. Since parsing is very
-    // simple and cheaper than doing multiple allocations, we simply re-parse the command.
     let command = state.commands.parse(&text);
 
     let typing_handle = TypingHandle::new(
@@ -639,10 +584,7 @@ async fn process_text_message<H: MessageHandler>(
     );
 
     let result = match command {
-        ParsedCommand::Help => {
-            // Already handled in webhook_handler
-            return Ok(());
-        }
+        ParsedCommand::Help => Ok(Action::ShowHelp { prelude: None }),
         ParsedCommand::Registered { name, args } => {
             state
                 .handler
