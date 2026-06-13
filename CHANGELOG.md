@@ -14,6 +14,8 @@ Possible log types:
 ### Unreleased
 
 - [added] Support command groups and per-message help visibility
+- [added] Expose `ThreemaClient` for proactively sending messages outside the webhook flow
+  (e.g. in reaction to an external event)
 - [changed] `BotServer::new` now rejects invalid command registrations (the same command
   registered twice within one section, duplicate group IDs, or the reserved `help` command name)
 - [changed] The built-in `help` command no longer bypasses rate limiting

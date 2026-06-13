@@ -4,7 +4,7 @@ use thiserror::Error;
 use threema_gateway::{
     cache::InMemoryPublicKeyCacheError,
     errors::{ApiBuilderError, ApiError, CryptoError},
-    protocol::e2e::file::FileMessageBuilderError,
+    protocol::{ThreemaId, e2e::file::FileMessageBuilderError},
 };
 
 use crate::server::handler::HandlerError;
@@ -70,11 +70,13 @@ pub enum RunError {
 
 /// Error when sending a message.
 #[derive(Debug, Error)]
-pub(crate) enum SendError {
+pub enum SendError {
     /// Failed to look up a public key via the API.
     #[error("failed to look up public key for {identity}: {source}")]
     PublicKeyLookup {
-        identity: String,
+        /// The Threema ID whose public key lookup failed.
+        identity: ThreemaId,
+        /// The underlying API error.
         #[source]
         source: ApiError,
     },
@@ -82,7 +84,9 @@ pub(crate) enum SendError {
     /// Failed to look up a public key from the cache.
     #[error("public key cache error for {identity}: {source}")]
     PublicKeyCache {
-        identity: String,
+        /// The Threema ID whose public key lookup failed.
+        identity: ThreemaId,
+        /// The underlying cache error.
         #[source]
         source: InMemoryPublicKeyCacheError,
     },
@@ -102,7 +106,9 @@ pub(crate) enum SendError {
     /// Failed to upload a blob.
     #[error("failed to upload {kind} blob: {source}")]
     BlobUpload {
+        /// The kind of blob that failed to upload (e.g. `"file"` or `"thumbnail"`).
         kind: &'static str,
+        /// The underlying API error.
         #[source]
         source: ApiError,
     },
@@ -113,7 +119,12 @@ pub(crate) enum SendError {
 
     /// Invalid media type for image message.
     #[error("wrong media type, expected: {expected}, got: {got}")]
-    InvalidMediaType { expected: &'static str, got: String },
+    InvalidMediaType {
+        /// The media type that was expected (e.g. `"image/*"`).
+        expected: &'static str,
+        /// The media type that was actually provided.
+        got: String,
+    },
 
     /// Handler callback failed.
     #[error("handler callback failed: {0}")]
