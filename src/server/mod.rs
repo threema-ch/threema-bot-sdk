@@ -56,7 +56,7 @@ async fn send_text(
         .send(to, &encrypted, false)
         .await
         .map_err(SendError::Send)?;
-    tracing::info!("Sent message to {}: {} chars", to, text.len());
+    tracing::info!("Sent text message to {}: {} chars", to, text.len());
     Ok(message_id)
 }
 
