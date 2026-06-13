@@ -14,7 +14,7 @@ use image::{
     codecs::{jpeg::JpegEncoder, png::PngEncoder},
 };
 use threema_gateway::{
-    ApiBuilder, E2eApi, FileData, RecipientKey, SecretKey,
+    ApiBuilder, E2eApi, E2eMessage, FileData, RecipientKey, SecretKey,
     cache::{InMemoryPublicKeyCache, InMemoryPublicKeyCacheError},
     encrypt_file_data,
     errors::{ApiBuilderError, ApiOrCacheError},
@@ -120,6 +120,38 @@ impl ThreemaClient {
     reason = "Used for grouping in rustdoc"
 )]
 impl ThreemaClient {
+    /// Send a text message.
+    ///
+    /// Looks up the recipient's public key (using the in-memory cache), then
+    /// encrypts and sends the message. Returns the ID of the sent message.
+    #[expect(
+        dead_code,
+        reason = "Convenience method for downstream bots; made reachable when ThreemaClient is exposed"
+    )]
+    pub(crate) async fn send_text(
+        &self,
+        to: &ThreemaId,
+        text: &str,
+    ) -> Result<MessageId, SendError> {
+        let recipient_key = self
+            .lookup_pubkey(to)
+            .await
+            .map_err(|err| pubkey_lookup_err(*to, err))?;
+
+        let encrypted = self
+            .e2e_api
+            .encode_and_encrypt(&E2eMessage::Text(text.into()), &recipient_key)
+            .map_err(SendError::Encrypt)?;
+        let message_id = self
+            .e2e_api
+            .send(to, &encrypted, false)
+            .await
+            .map_err(SendError::Send)?;
+
+        tracing::info!("Sent text message to {}: {} chars", to, text.len());
+        Ok(message_id)
+    }
+
     /// Send a file as a download-style attachment.
     ///
     /// Uses [`RenderingType::File`]: The file is shown as a downloadable attachment in Threema
