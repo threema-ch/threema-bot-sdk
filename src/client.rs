@@ -341,7 +341,6 @@ fn pubkey_lookup_err(
     identity: ThreemaId,
     err: ApiOrCacheError<InMemoryPublicKeyCacheError>,
 ) -> SendError {
-    let identity = identity.to_string();
     match err {
         ApiOrCacheError::ApiError(source) => SendError::PublicKeyLookup { identity, source },
         ApiOrCacheError::CacheError(source) => SendError::PublicKeyCache { identity, source },

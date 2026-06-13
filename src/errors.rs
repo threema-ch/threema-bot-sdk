@@ -4,7 +4,7 @@ use thiserror::Error;
 use threema_gateway::{
     cache::InMemoryPublicKeyCacheError,
     errors::{ApiBuilderError, ApiError, CryptoError},
-    protocol::e2e::file::FileMessageBuilderError,
+    protocol::{ThreemaId, e2e::file::FileMessageBuilderError},
 };
 
 use crate::server::handler::HandlerError;
@@ -75,7 +75,7 @@ pub enum SendError {
     #[error("failed to look up public key for {identity}: {source}")]
     PublicKeyLookup {
         /// The Threema ID whose public key lookup failed.
-        identity: String,
+        identity: ThreemaId,
         /// The underlying API error.
         #[source]
         source: ApiError,
@@ -85,7 +85,7 @@ pub enum SendError {
     #[error("public key cache error for {identity}: {source}")]
     PublicKeyCache {
         /// The Threema ID whose public key lookup failed.
-        identity: String,
+        identity: ThreemaId,
         /// The underlying cache error.
         #[source]
         source: InMemoryPublicKeyCacheError,
