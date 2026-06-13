@@ -11,6 +11,11 @@ Possible log types:
 - `[fixed]` for any bug fixes.
 - `[security]` to invite users to upgrade in case of vulnerabilities.
 
+### Unreleased
+
+- [added] Expose `ThreemaClient` for proactively sending messages outside the webhook flow
+  (e.g. in reaction to an external event)
+
 ### v0.2.0 (2026-06-12)
 
 - [added] Add location message support through `MessageHandler::handle_location` (#8)
