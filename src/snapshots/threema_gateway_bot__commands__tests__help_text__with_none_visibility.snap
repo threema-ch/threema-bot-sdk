@@ -2,6 +2,6 @@
 source: src/commands.rs
 expression: "reg.help_text(&HelpVisibility::none())"
 ---
-Available Commands:
+*Available Commands:*
 
-/help - Show this help message
+*/help* - _Show this help message_

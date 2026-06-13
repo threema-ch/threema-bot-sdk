@@ -2,8 +2,8 @@
 source: src/commands.rs
 expression: "reg.help_text(&HelpVisibility::all().hide_group(\"admin\"))"
 ---
-Available Commands:
+*Available Commands:*
 
-/help - Show this help message
-/echo - Echo back text
-/ping - Check if bot is alive
+*/help* - _Show this help message_
+*/echo* - _Echo back text_
+*/ping* - _Check if bot is alive_

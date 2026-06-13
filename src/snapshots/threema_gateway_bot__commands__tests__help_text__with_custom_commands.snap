@@ -1,9 +1,9 @@
 ---
 source: src/commands.rs
-expression: r.help_text()
+expression: "reg.help_text(&HelpVisibility::all())"
 ---
-Available Commands:
+*Available Commands:*
 
-/help - Show this help message
-/remind - Set a reminder
-/list - List your reminders
+*/help* - _Show this help message_
+*/remind* - _Set a reminder_
+*/list* - _List your reminders_

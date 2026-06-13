@@ -589,12 +589,15 @@ impl CommandRegistry {
             writeln!(text, "{description}\n").expect("write to String");
         }
 
-        writeln!(text, "Available Commands:\n").expect("write to String");
-        writeln!(text, "{prefix}{HELP_COMMAND_NAME} - Show this help message")
-            .expect("write to String");
+        writeln!(text, "*Available Commands:*\n").expect("write to String");
+        writeln!(
+            text,
+            "*{prefix}{HELP_COMMAND_NAME}* - _Show this help message_"
+        )
+        .expect("write to String");
         for cmd in &self.commands.registered {
             if visibility.is_command_visible(&cmd.name, None) {
-                writeln!(text, "{prefix}{} - {}", cmd.name, cmd.description)
+                writeln!(text, "*{prefix}{}* - _{}_", cmd.name, cmd.description)
                     .expect("write to String");
             }
         }
@@ -609,9 +612,9 @@ impl CommandRegistry {
             if visible_commands.is_empty() {
                 continue;
             }
-            writeln!(text, "\n*{}:*\n", group.title).expect("write to String");
+            writeln!(text, "\n{}:\n", group.title).expect("write to String");
             for cmd in visible_commands {
-                writeln!(text, "{prefix}{} - {}", cmd.name, cmd.description)
+                writeln!(text, "*{prefix}{}* - _{}_", cmd.name, cmd.description)
                     .expect("write to String");
             }
         }
