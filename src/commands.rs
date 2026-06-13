@@ -105,6 +105,9 @@ use std::{
 
 use crate::errors::InitError;
 
+/// Name of the built-in help command. Reserved: it cannot be registered as a custom command.
+const HELP_COMMAND_NAME: &str = "help";
+
 /// The style of command syntax used by the bot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandStyle {
@@ -208,6 +211,9 @@ impl Commands {
     /// Registered commands are dispatched to
     /// [`MessageHandler::handle_command`](crate::server::handler::MessageHandler::handle_command)
     /// and included in the auto-generated help text.
+    ///
+    /// The name `help` is reserved for the built-in help command and is rejected by
+    /// [`BotServer::new`](crate::server::BotServer::new).
     #[must_use]
     pub fn register<N: AsRef<str>, D: Into<String>>(mut self, name: N, description: D) -> Self {
         self.registered.push(CustomCommand {
@@ -299,7 +305,8 @@ impl Default for Commands {
 /// [`MessageHandler::help_visibility`](crate::server::handler::MessageHandler::help_visibility)
 /// per incoming message. Resolution is most-specific-wins: a command-level override beats a
 /// group-level override, which beats the base visibility. Within the same level, the last
-/// builder call wins. The built-in `help` command is always visible.
+/// builder call wins. The built-in `help` command is always visible; overrides referencing it
+/// have no effect.
 ///
 /// Note: Visibility only affects help rendering. Every registered command remains dispatchable
 /// by any sender; access control is the handler's responsibility in
@@ -443,11 +450,18 @@ impl CommandRegistry {
     /// Validate the command configuration.
     ///
     /// The same command name may be registered in multiple sections (see [`Commands::group`]),
-    /// but not twice within the same section. Group IDs must be unique.
+    /// but not twice within the same section. Group IDs must be unique, and the built-in
+    /// `help` command name cannot be registered.
     fn validate(&self) -> Result<(), InitError> {
         fn check_section(commands: &[CustomCommand], section: &str) -> Result<(), InitError> {
             let mut seen = HashSet::new();
             for cmd in commands {
+                if cmd.name == HELP_COMMAND_NAME {
+                    return Err(InitError::InvalidCommands(format!(
+                        "the command name \"{HELP_COMMAND_NAME}\" is reserved for the built-in \
+                         help command"
+                    )));
+                }
                 if !seen.insert(cmd.name.as_str()) {
                     return Err(InitError::InvalidCommands(format!(
                         "command \"{}\" registered more than once in {section}",
@@ -485,7 +499,11 @@ impl CommandRegistry {
             }
         }
         for command_id in visibility.commands.keys() {
-            if !self.is_registered(command_id) {
+            if command_id == HELP_COMMAND_NAME {
+                tracing::warn!(
+                    "Help visibility cannot override the built-in help command (always visible)"
+                );
+            } else if !self.is_registered(command_id) {
                 tracing::warn!("Help visibility references unknown command ID: {command_id}");
             }
         }
@@ -516,7 +534,7 @@ impl CommandRegistry {
                 };
                 let args = rest.strip_prefix(name).map_or("", str::trim);
 
-                if name == "help" {
+                if name == HELP_COMMAND_NAME {
                     ParsedCommand::Help
                 } else if self.is_registered(name) {
                     ParsedCommand::Registered { name, args }
@@ -530,7 +548,7 @@ impl CommandRegistry {
                 };
                 let args = trimmed.strip_prefix(name).map_or("", str::trim);
 
-                if name == "help" {
+                if name == HELP_COMMAND_NAME {
                     ParsedCommand::Help
                 } else if self.is_registered(name) {
                     ParsedCommand::Registered { name, args }
@@ -572,7 +590,8 @@ impl CommandRegistry {
         }
 
         writeln!(text, "Available Commands:\n").expect("write to String");
-        writeln!(text, "{prefix}help - Show this help message").expect("write to String");
+        writeln!(text, "{prefix}{HELP_COMMAND_NAME} - Show this help message")
+            .expect("write to String");
         for cmd in &self.commands.registered {
             if visibility.is_command_visible(&cmd.name, None) {
                 writeln!(text, "{prefix}{} - {}", cmd.name, cmd.description)
@@ -802,6 +821,23 @@ mod tests {
             insta::assert_snapshot!(
                 registry_err(commands),
                 @r#"invalid command registration: group ID "admin" used more than once"#
+            );
+        }
+
+        #[test]
+        fn reserved_help_name_rejected() {
+            let commands = Commands::new().register("help", "Custom help");
+            insta::assert_snapshot!(
+                registry_err(commands),
+                @r#"invalid command registration: the command name "help" is reserved for the built-in help command"#
+            );
+
+            let commands = Commands::new().group("admin", "Admin commands", |group| {
+                group.register("help", "Custom help")
+            });
+            insta::assert_snapshot!(
+                registry_err(commands),
+                @r#"invalid command registration: the command name "help" is reserved for the built-in help command"#
             );
         }
 

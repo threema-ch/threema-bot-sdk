@@ -27,7 +27,8 @@ pub enum InitError {
     ApiBuilder(#[from] ApiBuilderError),
 
     /// Invalid command registration: The same command was registered more than once within one
-    /// section (one group or the ungrouped commands), or two groups share an ID.
+    /// section (one group or the ungrouped commands), two groups share an ID, or the reserved
+    /// `help` command name was registered.
     ///
     /// Note that registering the same command in *different* sections is allowed, see
     /// [`Commands::group`](crate::commands::Commands::group).
