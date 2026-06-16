@@ -14,7 +14,7 @@ use image::{
     codecs::{jpeg::JpegEncoder, png::PngEncoder},
 };
 use threema_gateway::{
-    ApiBuilder, E2eApi, FileData, RecipientKey, SecretKey,
+    ApiBuilder, E2eApi, E2eMessage, FileData, RecipientKey, SecretKey,
     cache::{InMemoryPublicKeyCache, InMemoryPublicKeyCacheError},
     encrypt_file_data,
     errors::{ApiBuilderError, ApiOrCacheError},
@@ -29,13 +29,20 @@ use crate::errors::SendError;
 /// High-level client for interacting with the Threema Gateway API.
 ///
 /// This wraps [`E2eApi`] and provides:
-/// - Construction from bot config ([`from_config`](Self::from_config))
-/// - File message support with automatic thumbnail generation
-///   ([`send_file_message`](Self::send_file_message))
+/// - Convenience methods for sending text, image, and file messages
+///   ([`send_text`](Self::send_text), [`send_image_message`](Self::send_image_message)
+///   and [`send_file_message`](Self::send_file_message)), with automatic
+///   thumbnail generation for images
+/// - Cached public-key lookups ([`lookup_pubkey`](Self::lookup_pubkey))
 ///
 /// For all other operations, use [`api()`](Self::api) to access the
 /// underlying [`E2eApi`] directly.
-pub(crate) struct ThreemaClient {
+///
+/// Bots obtain a shared instance from
+/// [`BotServer::client()`](crate::server::BotServer::client), which can be
+/// cloned and moved into background tasks to send messages proactively
+/// (e.g. in reaction to an external event, outside the webhook flow).
+pub struct ThreemaClient {
     /// API client from threema-gateway library
     e2e_api: E2eApi,
     /// Public key cache
@@ -97,14 +104,15 @@ impl ThreemaClient {
     ///
     /// Use this for sending text messages, delivery receipts, typing indicators,
     /// looking up credits, and any other operation provided by the gateway crate.
-    pub(crate) fn api(&self) -> &E2eApi {
+    #[must_use]
+    pub fn api(&self) -> &E2eApi {
         &self.e2e_api
     }
 
     /// Look up the public key for a Threema ID.
     ///
     /// Uses an in-memory cache to avoid repeated network lookups for the same ID.
-    pub(crate) async fn lookup_pubkey(
+    pub async fn lookup_pubkey(
         &self,
         id: &ThreemaId,
     ) -> Result<RecipientKey, ApiOrCacheError<InMemoryPublicKeyCacheError>> {
@@ -120,11 +128,35 @@ impl ThreemaClient {
     reason = "Used for grouping in rustdoc"
 )]
 impl ThreemaClient {
+    /// Send a text message.
+    ///
+    /// Looks up the recipient's public key (using the in-memory cache), then
+    /// encrypts and sends the message. Returns the ID of the sent message.
+    pub async fn send_text(&self, to: &ThreemaId, text: &str) -> Result<MessageId, SendError> {
+        let recipient_key = self
+            .lookup_pubkey(to)
+            .await
+            .map_err(|err| pubkey_lookup_err(*to, err))?;
+
+        let encrypted = self
+            .e2e_api
+            .encode_and_encrypt(&E2eMessage::Text(text.into()), &recipient_key)
+            .map_err(SendError::Encrypt)?;
+        let message_id = self
+            .e2e_api
+            .send(to, &encrypted, false)
+            .await
+            .map_err(SendError::Send)?;
+
+        tracing::info!("Sent text message to {}: {} chars", to, text.len());
+        Ok(message_id)
+    }
+
     /// Send a file as a download-style attachment.
     ///
     /// Uses [`RenderingType::File`]: The file is shown as a downloadable attachment in Threema
     /// clients, even for image types. No thumbnail is generated.
-    pub(crate) async fn send_file_message(
+    pub async fn send_file_message(
         &self,
         to: &ThreemaId,
         file_data: &[u8],
@@ -156,7 +188,7 @@ impl ThreemaClient {
     /// for preview in Threema clients (PNG for PNG input, JPEG otherwise).
     ///
     /// Returns an error if `media_type` does not start with `image/`.
-    pub(crate) async fn send_image_message(
+    pub async fn send_image_message(
         &self,
         to: &ThreemaId,
         image_data: &[u8],
@@ -309,7 +341,6 @@ fn pubkey_lookup_err(
     identity: ThreemaId,
     err: ApiOrCacheError<InMemoryPublicKeyCacheError>,
 ) -> SendError {
-    let identity = identity.to_string();
     match err {
         ApiOrCacheError::ApiError(source) => SendError::PublicKeyLookup { identity, source },
         ApiOrCacheError::CacheError(source) => SendError::PublicKeyCache { identity, source },

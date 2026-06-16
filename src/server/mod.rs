@@ -56,7 +56,7 @@ async fn send_text(
         .send(to, &encrypted, false)
         .await
         .map_err(SendError::Send)?;
-    tracing::info!("Sent message to {}: {} chars", to, text.len());
+    tracing::info!("Sent text message to {}: {} chars", to, text.len());
     Ok(message_id)
 }
 
@@ -162,6 +162,35 @@ impl<H: MessageHandler> BotServer<H> {
             handler: Arc::new(handler),
             commands: Arc::new(commands),
         })
+    }
+
+    /// Obtain a shared [`ThreemaClient`] for sending messages.
+    ///
+    /// The returned handle can be cloned and moved into background tasks (e.g. a
+    /// timer or a subscription event loop) to send messages proactively, outside
+    /// of the webhook request flow.
+    ///
+    /// Grab it before calling [`run()`](Self::run), which borrows the server for
+    /// the lifetime of the process:
+    ///
+    /// ```rust,no_run
+    /// # use threema_gateway_bot::server::BotServer;
+    /// # use threema_gateway_bot::server::handler::MessageHandler;
+    /// # async fn example<H: MessageHandler>(
+    /// #     server: BotServer<H>,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = server.client();
+    /// tokio::spawn(async move {
+    ///     // ... on some external event, send a message proactively:
+    ///     // client.send_text(&recipient, "Your subscription updated").await
+    /// });
+    /// server.run().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn client(&self) -> Arc<ThreemaClient> {
+        Arc::clone(&self.threema_client)
     }
 
     /// Run the bot server.
