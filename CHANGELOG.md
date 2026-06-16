@@ -13,6 +13,8 @@ Possible log types:
 
 ### Unreleased
 
+### v0.2.1 (2026-06-16)
+
 - [added] Support command groups and per-message help visibility
 - [added] Expose `ThreemaClient` for proactively sending messages outside the webhook flow
   (e.g. in reaction to an external event)
