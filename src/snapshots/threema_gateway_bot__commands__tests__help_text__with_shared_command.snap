@@ -1,0 +1,17 @@
+---
+source: src/commands.rs
+expression: "reg.help_text(&HelpVisibility::all())"
+---
+*Available Commands:*
+
+*/help* - _Show this help message_
+
+Monitoring:
+
+*/uptime* - _Show uptime_
+*/status* - _Show system status_
+
+Admin commands:
+
+*/restart* - _Restart the bot_
+*/status* - _Show admin system status_

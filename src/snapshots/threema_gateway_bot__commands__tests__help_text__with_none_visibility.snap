@@ -1,9 +1,7 @@
 ---
 source: src/commands.rs
-expression: "reg.help_text(&HelpVisibility::all())"
+expression: "reg.help_text(&HelpVisibility::none())"
 ---
-My cool bot.
-
 *Available Commands:*
 
 */help* - _Show this help message_

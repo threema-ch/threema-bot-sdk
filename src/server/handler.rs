@@ -16,7 +16,7 @@ use threema_gateway::{
 };
 use tokio::{task::JoinHandle, time::Duration};
 
-use crate::commands::Commands;
+use crate::commands::{Commands, HelpVisibility};
 
 /// Error type for [`MessageHandler`] methods.
 ///
@@ -205,6 +205,47 @@ pub trait MessageHandler: Send + Sync + 'static {
     #[must_use]
     fn commands() -> Commands {
         Commands::new()
+    }
+
+    /// Control which commands and groups are listed in the help text for this message.
+    ///
+    /// Called every time help text is rendered for a user (for the built-in `/help` command and
+    /// for [`Action::ShowHelp`]). The default shows all registered commands.
+    ///
+    /// **Visibility is not authorization:** Hiding a command only affects the rendered help
+    /// text. Every registered command remains dispatchable by any sender, so access must be
+    /// enforced in [`handle_command`](Self::handle_command). Both checks typically share the
+    /// same predicate (e.g. an `is_admin` lookup).
+    ///
+    /// This method is called inline while processing the webhook request (before the HTTP
+    /// response is returned), so it should be fast. If it returns an error, a generic error
+    /// message is sent to the user instead of the help text (the help text is never rendered
+    /// with full visibility as a fallback).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// const GROUP_ADMIN: &str = "admin";
+    ///
+    /// fn commands() -> Commands {
+    ///     Commands::new()
+    ///         .register("ping", "Check if bot is alive")
+    ///         .group(GROUP_ADMIN, "Admin commands", |group| {
+    ///             group.register("restart", "Restart the bot")
+    ///         })
+    /// }
+    ///
+    /// async fn help_visibility(&self, ctx: &MessageContext) -> HandlerResult<HelpVisibility> {
+    ///     Ok(if self.is_admin(ctx.sender_identity) {
+    ///         HelpVisibility::all()
+    ///     } else {
+    ///         HelpVisibility::all().hide_group(GROUP_ADMIN)
+    ///     })
+    /// }
+    /// ```
+    #[expect(unused_variables, reason = "Default trait method impl")]
+    async fn help_visibility(&self, ctx: &MessageContext) -> HandlerResult<HelpVisibility> {
+        Ok(HelpVisibility::all())
     }
 
     /// Handle an incoming text message.

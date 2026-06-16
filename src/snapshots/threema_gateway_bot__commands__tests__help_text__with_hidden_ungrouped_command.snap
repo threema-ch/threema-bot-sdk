@@ -1,0 +1,13 @@
+---
+source: src/commands.rs
+expression: "reg.help_text(&HelpVisibility::all().hide_command(\"ping\"))"
+---
+*Available Commands:*
+
+*/help* - _Show this help message_
+*/echo* - _Echo back text_
+
+Admin commands:
+
+*/restart* - _Restart the bot_
+*/kick* - _Remove a user_

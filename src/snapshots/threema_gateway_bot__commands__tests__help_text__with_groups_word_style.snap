@@ -5,5 +5,10 @@ expression: "reg.help_text(&HelpVisibility::all())"
 *Available Commands:*
 
 *help* - _Show this help message_
-*remind* - _Set a reminder_
-*list* - _List your reminders_
+*echo* - _Echo back text_
+*ping* - _Check if bot is alive_
+
+Admin commands:
+
+*restart* - _Restart the bot_
+*kick* - _Remove a user_

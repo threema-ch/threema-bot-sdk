@@ -11,6 +11,13 @@ Possible log types:
 - `[fixed]` for any bug fixes.
 - `[security]` to invite users to upgrade in case of vulnerabilities.
 
+### Unreleased
+
+- [added] Support command groups and per-message help visibility
+- [changed] `BotServer::new` now rejects invalid command registrations (the same command
+  registered twice within one section, duplicate group IDs, or the reserved `help` command name)
+- [changed] The built-in `help` command no longer bypasses rate limiting
+
 ### v0.2.0 (2026-06-12)
 
 - [added] Add location message support through `MessageHandler::handle_location` (#8)

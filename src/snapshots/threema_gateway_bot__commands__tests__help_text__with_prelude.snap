@@ -1,11 +1,11 @@
 ---
 source: src/commands.rs
-expression: "r.help_text_with_prelude(Some(\"Unknown command: /foo\"))"
+expression: "reg.help_text_with_prelude(Some(\"Unknown command: /foo\"),\n&HelpVisibility::all())"
 ---
 Unknown command: /foo
 
 ---
 
-Available Commands:
+*Available Commands:*
 
-/help - Show this help message
+*/help* - _Show this help message_
