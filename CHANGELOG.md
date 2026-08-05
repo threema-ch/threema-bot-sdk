@@ -13,6 +13,12 @@ Possible log types:
 
 ### Unreleased
 
+- [fixed] List config values (currently `threema.allowed_users`) can now be set through environment
+  variables as a comma-separated list, e.g. `PREFIX__THREEMA__ALLOWED_USERS=ECHOECHO,ABCD1234`
+- [added] Add `BotConfig::env_source` plus the `BotConfig::ENV_SEPARATOR`,
+  `BotConfig::ENV_LIST_SEPARATOR` and `BotConfig::ENV_LIST_KEYS` constants, so bots that extend the
+  configuration can reuse the environment variable setup of this crate instead of replicating it
+
 ### v0.2.1 (2026-06-16)
 
 - [added] Support command groups and per-message help visibility

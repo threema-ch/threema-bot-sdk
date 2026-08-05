@@ -49,7 +49,7 @@
 //! | `private_key`<br>`PREFIX__THREEMA__PRIVATE_KEY` | E2E private key (hex) | Yes | - |
 //! | `api_secret`<br>`PREFIX__THREEMA__API_SECRET` | API secret from [gateway.threema.ch](https://gateway.threema.ch/) | Yes | - |
 //! | `api_url`<br>`PREFIX__THREEMA__API_URL` | Gateway API base URL | No | `https://msgapi.threema.ch` |
-//! | `allowed_users`<br>`PREFIX__THREEMA__ALLOWED_USERS` | Threema IDs allowed to use the bot | No | `[]` (allow anyone) |
+//! | `allowed_users`<br>`PREFIX__THREEMA__ALLOWED_USERS` | Threema IDs allowed to use the bot (comma-separated list when set through the environment, e.g. `ECHOECHO,ABCD1234`) | No | `[]` (allow anyone) |
 //!
 //! ## `[rate_limiting]`
 //!
@@ -90,6 +90,9 @@
 //!
 //! Environment variables use the format `PREFIX__SECTION__KEY`, e.g. `MYBOT__THREEMA__API_SECRET`.
 //!
+//! List values are comma-separated, e.g. `MYBOT__THREEMA__ALLOWED_USERS=ECHOECHO,ABCD1234`. Note
+//! that the entries are not trimmed, so don't add spaces around the commas.
+//!
 //! ## 2. Extend with custom fields
 //!
 //! If your bot needs additional configuration (e.g. an API key, a database URL), define your own
@@ -115,13 +118,19 @@
 //!     // Your own fields
 //!     database_url: String,
 //!     api_token: String,
+//!     admins: Vec<String>,
 //! }
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Load with the `config` crate
+//! //
+//! // `BotConfig::env_source` exposes an environment source that is set up like the one used by
+//! // `BotConfig::load_with_prefix`, so the settings of this crate (including its list keys)
+//! // don't have to be replicated. Sequence fields of your own config need to be registered with
+//! // `with_list_parse_key`.
 //! let raw = config::Config::builder()
 //!     .add_source(config::File::with_name("config.toml"))
-//!     .add_source(config::Environment::with_prefix("MYBOT").separator("__"))
+//!     .add_source(BotConfig::env_source("MYBOT").with_list_parse_key("admins"))
 //!     .build()?;
 //! let my_config: MyBotConfig = raw.try_deserialize()?;
 //!
@@ -281,8 +290,33 @@ fn default_messages_per_hour() -> u32 {
 impl BotConfig {
     /// Default environment variable prefix.
     pub(crate) const DEFAULT_ENV_PREFIX: &'static str = "THREEMABOT";
-    /// Separator for nested configuration values.
-    pub(crate) const ENV_SEPARATOR: &'static str = "__";
+    /// Separator for nested configuration values in environment variables (`PREFIX__SECTION__KEY`).
+    pub const ENV_SEPARATOR: &'static str = "__";
+    /// Separator for list values in environment variables (`ONE,TWO`).
+    pub const ENV_LIST_SEPARATOR: &'static str = ",";
+    /// Configuration keys of this crate whose environment variable values are parsed as lists.
+    ///
+    /// Sequence-typed fields must be registered with
+    /// [`Environment::with_list_parse_key`](config::Environment::with_list_parse_key), otherwise
+    /// setting them through an environment variable fails with an "invalid type: string, expected a
+    /// sequence" error. Keys are lowercase and dot-separated, without the environment variable
+    /// prefix.
+    ///
+    /// [`BotConfig::env_source`] registers these keys already. Use this constant only if you build
+    /// the environment source yourself, e.g. with a different configuration library:
+    ///
+    /// ```rust
+    /// use threema_gateway_bot::config::BotConfig;
+    ///
+    /// let mut source = config::Environment::with_prefix("MYBOT")
+    ///     .separator(BotConfig::ENV_SEPARATOR)
+    ///     .try_parsing(true)
+    ///     .list_separator(BotConfig::ENV_LIST_SEPARATOR);
+    /// for key in BotConfig::ENV_LIST_KEYS {
+    ///     source = source.with_list_parse_key(key);
+    /// }
+    /// ```
+    pub const ENV_LIST_KEYS: &'static [&'static str] = &["threema.allowed_users"];
 
     /// Load configuration with the default prefix (`THREEMABOT`).
     pub fn load(config_path: &Path) -> Result<Self, ConfigLoadError> {
@@ -312,18 +346,51 @@ impl BotConfig {
         // Build config
         let config = config::Config::builder()
             .add_source(config::File::from(config_path).required(false))
-            .add_source(
-                config::Environment::with_prefix(prefix)
-                    .prefix_separator(Self::ENV_SEPARATOR)
-                    .separator(Self::ENV_SEPARATOR)
-                    .try_parsing(true),
-            )
+            .add_source(Self::env_source(prefix))
             .build()?;
 
         // Deserialize
         let cfg: BotConfig = config.try_deserialize()?;
 
         Ok(cfg)
+    }
+
+    /// Build the environment variable source used by [`BotConfig::load_with_prefix`].
+    ///
+    /// The returned source uses `PREFIX__SECTION__KEY` names, parses booleans and numbers, and
+    /// registers all sequence-typed keys of this crate ([`BotConfig::ENV_LIST_KEYS`]) as
+    /// comma-separated lists.
+    ///
+    /// Use this when you extend the configuration with your own fields, so that the settings of
+    /// this crate don't have to be replicated by hand. Own sequence fields still need to be
+    /// registered, but only your own:
+    ///
+    /// ```rust
+    /// use threema_gateway_bot::config::BotConfig;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let raw = config::Config::builder()
+    ///     .add_source(config::File::with_name("config.toml").required(false))
+    ///     .add_source(BotConfig::env_source("MYBOT").with_list_parse_key("my_section.my_list"))
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Note: This method exposes a type of the [`config`](https://docs.rs/config) crate, so it can
+    /// only be used if your bot depends on the same major version of that crate as this crate does.
+    /// If it doesn't, build the source yourself using [`BotConfig::ENV_SEPARATOR`],
+    /// [`BotConfig::ENV_LIST_SEPARATOR`] and [`BotConfig::ENV_LIST_KEYS`].
+    pub fn env_source(prefix: &str) -> config::Environment {
+        let mut source = config::Environment::with_prefix(prefix)
+            .prefix_separator(Self::ENV_SEPARATOR)
+            .separator(Self::ENV_SEPARATOR)
+            .try_parsing(true)
+            .list_separator(Self::ENV_LIST_SEPARATOR);
+        for key in Self::ENV_LIST_KEYS {
+            source = source.with_list_parse_key(key);
+        }
+        source
     }
 
     /// Validate configuration values.
@@ -366,7 +433,24 @@ impl BotConfig {
 mod tests {
     use threema_gateway::{SecretKey, protocol::ThreemaId};
 
-    use crate::config::{BotConfig, RateLimitingConfig, ServerConfig, ThreemaConfig};
+    use crate::{
+        config::{BotConfig, RateLimitingConfig, ServerConfig, ThreemaConfig},
+        errors::ConfigLoadError,
+    };
+
+    /// Load a [`BotConfig`] from the passed environment variables (prefix `TESTBOT`), without
+    /// touching the process environment or the filesystem.
+    fn load_from_env(vars: Vec<(&str, &str)>) -> Result<BotConfig, ConfigLoadError> {
+        let source = BotConfig::env_source("TESTBOT").source(Some(
+            vars.into_iter()
+                .map(|(key, value)| (key.to_owned(), value.to_owned()))
+                .collect(),
+        ));
+        Ok(config::Config::builder()
+            .add_source(source)
+            .build()?
+            .try_deserialize()?)
+    }
 
     fn create_test_config() -> BotConfig {
         BotConfig {
@@ -399,5 +483,121 @@ mod tests {
         let mut config = create_test_config();
         config.threema.gateway_id = ThreemaId::try_from("NOTASTAR").unwrap();
         assert!(config.validate().is_err());
+    }
+
+    mod env_source {
+        use serde::Deserialize;
+
+        use crate::config::{BotConfig, tests::load_from_env};
+
+        /// Load a config purely from environment variables.
+        fn base_env() -> Vec<(&'static str, &'static str)> {
+            vec![
+                ("TESTBOT__SERVER__HOST", "0.0.0.0"),
+                ("TESTBOT__SERVER__PORT", "8080"),
+                ("TESTBOT__SERVER__WEBHOOK_PATH", "/webhook"),
+                ("TESTBOT__THREEMA__GATEWAY_ID", "*TESTBOT"),
+                (
+                    "TESTBOT__THREEMA__PRIVATE_KEY",
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                ),
+                ("TESTBOT__THREEMA__API_SECRET", "secret"),
+            ]
+        }
+
+        #[test]
+        fn single_list_entry() {
+            let mut env = base_env();
+            env.push(("TESTBOT__THREEMA__ALLOWED_USERS", "ECHOECHO"));
+            let config = load_from_env(env).unwrap();
+            assert_eq!(
+                config
+                    .threema
+                    .allowed_users
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                vec!["ECHOECHO"],
+            );
+        }
+
+        #[test]
+        fn multiple_list_entries() {
+            let mut env = base_env();
+            env.push(("TESTBOT__THREEMA__ALLOWED_USERS", "ECHOECHO,ABCD1234"));
+            let config = load_from_env(env).unwrap();
+            assert_eq!(
+                config
+                    .threema
+                    .allowed_users
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                vec!["ECHOECHO", "ABCD1234"],
+            );
+        }
+
+        #[test]
+        fn omitted_list() {
+            let config = load_from_env(base_env()).unwrap();
+            assert!(
+                config.threema.allowed_users.is_empty(),
+                "allowed_users should default to an empty list"
+            );
+        }
+
+        /// Non-list string values must not be turned into lists by the list separator.
+        #[test]
+        fn string_containing_separator() {
+            let mut env = base_env();
+            env.push(("TESTBOT__THREEMA__API_SECRET", "a,b"));
+            let config = load_from_env(env).unwrap();
+            assert_eq!(config.threema.api_secret, "a,b");
+        }
+
+        /// A bot extending the config can register its own list keys on top of the library's.
+        #[test]
+        fn custom_list_key() {
+            #[derive(Deserialize)]
+            struct CustomConfig {
+                admins: Vec<String>,
+                database_url: String,
+            }
+
+            let source = BotConfig::env_source("TESTBOT")
+                .with_list_parse_key("admins")
+                .source(Some(
+                    [
+                        ("TESTBOT__ADMINS".to_owned(), "alice,bob".to_owned()),
+                        (
+                            "TESTBOT__DATABASE_URL".to_owned(),
+                            "postgres://localhost".to_owned(),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ));
+            let custom: CustomConfig = config::Config::builder()
+                .add_source(source)
+                .build()
+                .unwrap()
+                .try_deserialize()
+                .unwrap();
+
+            assert_eq!(custom.admins, vec!["alice", "bob"]);
+            assert_eq!(custom.database_url, "postgres://localhost");
+        }
+
+        /// Every registered list key must look valid.
+        #[test]
+        fn list_keys_are_lowercase_and_dotted() {
+            for key in BotConfig::ENV_LIST_KEYS {
+                assert!(
+                    key.chars()
+                        .all(|chr| chr.is_ascii_lowercase() || chr == '_' || chr == '.'),
+                    "list key {key} must be lowercase and dot-separated"
+                );
+            }
+        }
     }
 }
