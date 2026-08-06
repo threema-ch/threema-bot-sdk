@@ -13,6 +13,10 @@ Possible log types:
 
 ### Unreleased
 
+- ...
+
+### v0.2.2 (2026-08-06)
+
 - [fixed] List config values (currently `threema.allowed_users`) can now be set through environment
   variables as a comma-separated list, e.g. `PREFIX__THREEMA__ALLOWED_USERS=ECHOECHO,ABCD1234`
 - [added] Add `BotConfig::env_source` plus the `BotConfig::ENV_SEPARATOR`,
